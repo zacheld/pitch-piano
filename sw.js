@@ -1,6 +1,6 @@
 // Offline support: the whole app, piano included (~3 MB), is stored on the phone at install.
 // Each release gets a new VERSION; the new copy downloads in the background and the old one is removed.
-const VERSION = 'pitch-piano-1.0.0';
+const VERSION = 'pitch-piano-1.1.0';
 const CORE = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/pitch.js', 'js/notes.js', 'js/graph.js', 'js/keyboard.js', 'js/piano-audio.js',

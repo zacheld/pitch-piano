@@ -102,6 +102,22 @@ try {
   await page.locator('.presets button', { hasText: '440' }).tap();
   await page.locator('#doneBtn').tap();
   await page.waitForTimeout(400);
+  const closedByDone = await page.evaluate(() => !document.getElementById('sheet').classList.contains('open'));
+  await page.locator('#setBtn').tap();
+  await page.waitForTimeout(400);
+  await page.touchscreen.tap(200, 60); // the dimmed area above the sheet
+  await page.waitForTimeout(400);
+  const closedByScrim = await page.evaluate(() => !document.getElementById('sheet').classList.contains('open'));
+  ok(closedByDone && closedByScrim, `settings close with Done and by tapping outside (${closedByDone}, ${closedByScrim})`);
+  // a long press on a key: still plays, and the touch is held by the app (no iOS loupe/selection)
+  const kb = await page.locator('.key[data-midi="64"]').boundingBox();
+  const lp = await page.evaluate(({ x, y }) => new Promise((resolve) => {
+    const el = document.elementFromPoint(x, y);
+    const ev = new Event('touchstart', { bubbles: true, cancelable: true });
+    el.dispatchEvent(ev);
+    resolve(ev.defaultPrevented);
+  }), { x: kb.x + kb.width / 2, y: kb.y + kb.height - 30 });
+  ok(lp, 'touches on the keys are taken by the app (stops the iOS magnifier)');
 
   // landscape
   await page.setViewportSize({ width: 852, height: 393 });
@@ -142,6 +158,9 @@ try {
   ok(cached.sw && cached.samples === 42, `offline copy saved (service worker ${cached.sw ? 'on' : 'off'}, ${cached.n} files, ${cached.samples} piano notes)`);
   await p2.locator('#startBtn').click();
   await p2.waitForFunction(() => window.__pp.listening, null, { timeout: 5000 });
+  const routeOn = await p2.evaluate(() => ({ route: window.__pp.piano.route, playing: window.__pp.piano.el && !window.__pp.piano.el.paused }));
+  ok(routeOn.route === 'stream' && routeOn.playing, `while listening, piano plays through the call-audio path (${routeOn.route}, element ${routeOn.playing ? 'playing' : 'not playing'})`);
+  await p2.evaluate(() => { window.__pp.piano.noteOn(69); });
   const seen = new Set();
   const t0 = Date.now();
   while (Date.now() - t0 < 12000) { // the fake mic loops a ~5.6 s file; watch two passes
@@ -162,6 +181,9 @@ try {
   const n2 = await p2.evaluate(() => window.__pp.graph.points.length);
   ok(n1 === n2, 'pause freezes the graph');
   await p2.screenshot({ path: path.join(out, 'phone-paused.png') });
+  await p2.locator('#micBtn').click();
+  const routeOff = await p2.evaluate(() => ({ route: window.__pp.piano.route, paused: window.__pp.piano.el.paused, listening: window.__pp.listening }));
+  ok(!routeOff.listening && routeOff.route === 'direct' && routeOff.paused, `after stopping, piano is back on the normal path (${routeOff.route})`);
   ok(errs2.length === 0, 'no errors in Chrome' + (errs2.length ? ': ' + errs2.join(' | ') : ''));
   await ch.close();
 } finally {

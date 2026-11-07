@@ -22,8 +22,40 @@ export class PianoAudio {
     const comp = ctx.createDynamicsCompressor(); // keeps big sustained chords from clipping
     comp.threshold.value = -12; comp.knee.value = 8; comp.ratio.value = 4;
     comp.attack.value = 0.003; comp.release.value = 0.25;
-    this.out.connect(comp).connect(ctx.destination);
+    this.out.connect(comp);
+    comp.connect(ctx.destination);
+    this.comp = comp;
+    this.route = 'direct';
     return this.load();
+  }
+
+  /**
+   * While the microphone is on, iPhone turns Web Audio playback way down (Safari switches to its
+   * "video chat" audio mode). Audio played from an <audio> element with a live stream is rendered by
+   * the microphone's own audio unit instead (the path call audio uses), so it stays loud.
+   * on = true: send the piano through that path. on = false: the normal, lowest-latency path.
+   * Call it from a tap handler the first time, so the <audio> element is allowed to play.
+   */
+  useCallAudio(on) {
+    if (!this.ctx) return;
+    if (on && !this.streamDest) {
+      if (!this.ctx.createMediaStreamDestination) on = false;
+      else {
+        this.streamDest = this.ctx.createMediaStreamDestination();
+        this.el = document.createElement('audio');
+        this.el.setAttribute('playsinline', '');
+        this.el.hidden = true;
+        this.el.srcObject = this.streamDest.stream;
+        document.body.appendChild(this.el);
+      }
+    }
+    const want = on ? 'stream' : 'direct';
+    if (want === 'stream') { const p = this.el.play(); if (p && p.catch) p.catch(() => {}); }
+    if (want === this.route) return;
+    try { this.comp.disconnect(); } catch (e) { /* not connected */ }
+    if (want === 'stream') this.comp.connect(this.streamDest);
+    else { this.comp.connect(this.ctx.destination); if (this.el) this.el.pause(); }
+    this.route = want;
   }
 
   async load() {

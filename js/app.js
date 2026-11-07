@@ -6,13 +6,13 @@ import { Keyboard } from './keyboard.js';
 import { Graph, accuracyClass } from './graph.js';
 import { sciName, karaokeName, helmholtz, midiToFreq, A4_PRESETS } from './notes.js';
 
-const VERSION = '1.0';
+const VERSION = '1.1';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const DEFAULTS = {
   a4: 440, sensitivity: 0.6, speed: 'normal',
   levelStyle: 'karaoke', flats: false, showCents: true, colorTrace: true, span: 18, window: 7,
   highlight: true, followKeys: true, showTargets: true, keyLabels: 'white', keySize: 'm', sustain: true, volume: 0.8,
-  echo: false,
+  echo: false, callAudio: true,
 };
 
 // ---------- storage (wrapped: private mode or cleared storage must never break the app) ----------
@@ -30,6 +30,9 @@ const setText = (el, t) => { if (el.textContent !== t) el.textContent = t; };
 for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
 document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
 document.addEventListener('touchmove', (e) => { if (!e.target.closest('.scroll')) e.preventDefault(); }, { passive: false });
+// Stopping the touch itself is what keeps iOS from showing its magnifying-glass loupe on a long press
+// or a drag (CSS alone doesn't). Buttons, sliders and the settings list keep normal touches.
+document.addEventListener('touchstart', (e) => { if (!e.target.closest('button, input, .scroll, .scrim')) e.preventDefault(); }, { passive: false });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ---------- audio ----------
@@ -90,6 +93,7 @@ async function startMic() {
     return showMsg('This browser can’t use the microphone. On iPhone, open the app from Safari or your Home Screen.');
   }
   starting = true; render();
+  piano.useCallAudio(S.callAudio); // must happen inside the tap, before any waiting
   setSession('play-and-record');
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -107,6 +111,7 @@ async function startMic() {
     listening = true; paused = false;
     showMsg(null);
   } catch (err) {
+    piano.useCallAudio(false);
     setSession('playback');
     const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
     showMsg(denied
@@ -124,6 +129,7 @@ function stopMic() {
     mic = null;
   }
   listening = false; paused = false;
+  piano.useCallAudio(false);
   setSession('playback');
   render();
 }
@@ -286,8 +292,10 @@ const SECTIONS = [
     { key: 'volume', type: 'slider', label: 'Piano volume', min: 0, max: 1, step: 0.01 },
   ] },
   { title: 'iPhone audio', items: [
+    { key: 'callAudio', type: 'toggle', label: 'Louder piano while listening',
+      hint: 'While the mic is on, plays the piano the way iPhone plays call audio, so it isn’t turned down. If the piano sounds late or choppy while listening, turn this off.' },
     { key: 'echo', type: 'toggle', label: 'Echo cancellation',
-      hint: 'Tries to keep the piano out of the microphone. It may make the piano quieter. Applies the next time you start listening.' },
+      hint: 'Keeps the piano out of the microphone (needs Louder piano on). It can also change how your voice is picked up. Applies the next time you start listening.' },
   ] },
 ];
 
@@ -382,6 +390,7 @@ function applySettings() {
   const w = KEY_SIZES[S.keySize] || 44;
   if (w !== keyboard.whiteW) keyboard.setKeyWidth(w);
   if (!S.highlight) keyboard.setSung(null, '');
+  if (listening) piano.useCallAudio(S.callAudio);
   renderReadout(listening && vt - lastVoiced < 0.3);
   renderRange();
   render();
@@ -404,6 +413,12 @@ $('tipClose').addEventListener('click', () => { $('installTip').hidden = true; s
 
 // ---------- offline support ----------
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  // When an update has downloaded, switch to it right away unless you're in the middle of singing.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !listening && !keyboard.held.size && !reloading) { reloading = true; location.reload(); }
+  });
   navigator.serviceWorker.register('sw.js').catch(() => {});
 }
 
@@ -412,4 +427,4 @@ applySettings();
 requestAnimationFrame(loop);
 
 // handle for automated checks
-window.__pp = { S, graph, keyboard, piano, tracker, ctx, get listening() { return listening; }, get shown() { return shown; }, get range() { return range; }, startMic, stopMic };
+window.__pp = { S, graph, keyboard, piano, tracker, ctx, get listening() { return listening; }, get shown() { return shown; }, get range() { return range; }, startMic, stopMic, VERSION };

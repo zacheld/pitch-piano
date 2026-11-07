@@ -10,6 +10,7 @@ A personal singing app for iPhone: sing and see your pitch as a line over time, 
 - **Pause** freezes the graph so you can look at what you just sang.
 - **Range** (top left) records the lowest and highest notes you've held for half a second. Tap it twice to reset. Piano notes don't count.
 - **Piano**: tap or slide across the keys. Move along the keyboard with the strip above it (tap or drag) or the ‹ › buttons; the keys themselves never scroll, so playing never moves them by accident. **Sustain** lets notes ring after you lift your finger.
+- **Louder piano while listening** (Settings → iPhone audio, on by default): while the mic is on, iPhone puts Safari into a call-style audio mode that turns ordinary web audio way down. With this on, the piano is played the way call audio is, so it stays loud. Turn on **Echo cancellation** as well to keep the piano out of the microphone.
 - **Settings** (sliders button): tuning (A4 = 415 Baroque, 430, 440, 442, 466, or any value; the piano retunes too), mic sensitivity, response speed, octave label style, sharps or flats, graph size, key labels and size, and whether the sung note lights up on the keyboard.
 
 ### Octave labels
@@ -30,6 +31,8 @@ Karaoke blocks run from A up to G♯ (mid2 = A3–G♯4), matching the Japanese 
 1. Open the app's web address in **Safari**.
 2. Tap **Share** → **Add to Home Screen** → keep **Open as Web App** on → **Add**.
 3. Open it from the new icon. It runs full-screen, appears in the app switcher on its own, and works offline once it has loaded.
+
+iPhone asks for microphone permission each time the app is opened; Home Screen web apps can't keep that permission (a Safari limitation, not something the app can change). Updates install by themselves: open the app, and it switches to the new version within a few seconds unless you're listening.
 
 ## Files
 
