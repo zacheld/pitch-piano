@@ -196,3 +196,30 @@ test('legato scale with vibrato: the note name never flashes a note that was not
   assert.deepEqual(strays, [], `readout sequence: ${shown.map((n) => sciName(n)).join(' ')}`);
   assert.deepEqual(shown, scale.filter((n, i) => i === 0 || n !== scale[i - 1]), 'every note shown, in order');
 });
+
+test('note starts never flash the wrong octave, whatever the frame timing (5 sung notes × 22 timings)', async () => {
+  const { NoteHold } = await import('../js/pitch.js');
+  const sr = SR, notes = [60, 62, 64, 65, 67], dur = 0.9, gap = 0.12;
+  const n = Math.round(sr * notes.length * (dur + gap) + sr * 0.5), x = new Float32Array(n);
+  let i = Math.round(sr * 0.3);
+  for (const m of notes) {               // the same test singer the browser check uses: 50 ms attacks, breaths between notes
+    const tone = voice(midiToFreq(m), dur, { vibratoCents: 40 });
+    for (let k = 0; k < tone.length; k++, i++) { const t = k / sr; x[i] = tone[k] * Math.min(1, t / 0.05, (dur - t) / 0.05); }
+    i += Math.round(sr * gap);
+  }
+  const hop = 800, failures = [];
+  for (let off = 0; off < hop; off += 37) {
+    const det = new PitchDetector({ sampleRate: sr }), trk = new PitchTracker(), hold = new NoteHold();
+    let lastVoiced = -1;
+    for (let s = off; s + 2048 <= n; s += hop) {
+      const t = (s + 2048) / sr, o = trk.push(det.detect(x.subarray(s, s + 2048)), t);
+      if (o.midi !== null && !notes.some((m) => Math.abs(o.midi - m) < 1.5)) failures.push(`timing ${off}: line at ${o.midi.toFixed(1)}`);
+      if (o.centre !== null) {
+        lastVoiced = t;
+        const shown = hold.update(o.centre, t).note;
+        if (!notes.includes(shown)) failures.push(`timing ${off}: readout ${sciName(shown)}`);
+      } else if (t - lastVoiced > 0.1) hold.reset();
+    }
+  }
+  assert.deepEqual(failures.slice(0, 5), []);
+});

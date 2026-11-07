@@ -6,7 +6,7 @@ import { Keyboard } from './keyboard.js';
 import { Graph, accuracyClass } from './graph.js';
 import { sciName, karaokeName, helmholtz, midiToFreq, A4_PRESETS } from './notes.js';
 
-const VERSION = '1.1';
+const VERSION = '1.1.1';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const DEFAULTS = {
   a4: 440, sensitivity: 0.6, speed: 'normal',

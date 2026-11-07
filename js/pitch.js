@@ -117,10 +117,10 @@ export class PitchDetector {
   }
 }
 
-/** Smoothing presets: median window (frames), onset frames, centre-average window (seconds). */
+/** Smoothing presets: median window (frames), onset frames that must agree, centre-average window (seconds). */
 /** octave: frames an octave jump must persist before it is believed; hold: seconds before the note name changes. */
 export const SPEEDS = {
-  fast: { median: 1, onset: 1, centre: 0.12, octave: 4, hold: 0.04 },
+  fast: { median: 1, onset: 2, centre: 0.12, octave: 4, hold: 0.04 },
   normal: { median: 3, onset: 2, centre: 0.25, octave: 6, hold: 0.08 },
   smooth: { median: 5, onset: 3, centre: 0.4, octave: 8, hold: 0.12 },
 };
@@ -137,7 +137,8 @@ export class PitchTracker {
   setSensitivity(s) { this.gate = gateFor(s); }
   setSpeed(name) { this.speed = SPEEDS[name] || SPEEDS.normal; }
   reset() {
-    this.recent = []; this.voicedRun = 0; this.last = null; this.lastT = -1;
+    this.recent = []; this.last = null; this.lastT = -1; this.steady = 0;
+    this.established = false; this.onsetVals = [];
     this.jumpRun = 0; this.history = []; this.beforeJump = null; this.silentFrom = null;
   }
 
@@ -149,7 +150,7 @@ export class PitchTracker {
   push(res, t) {
     const voiced = res.freq > 0 && res.rms >= this.gate && res.clarity >= this.minClarity;
     if (!voiced) {
-      this.voicedRun = 0; this.recent.length = 0; this.jumpRun = 0;
+      this.recent.length = 0; this.jumpRun = 0; this.established = false; this.onsetVals.length = 0;
       if (this.silentFrom == null) this.silentFrom = t;
       return { midi: null, centre: null, rms: res.rms, clarity: res.clarity };
     }
@@ -161,7 +162,10 @@ export class PitchTracker {
     // Octave guard: a sudden jump of ~1 or 2 octaves for a few frames is almost always a detection
     // error (a strong harmonic winning), not a real leap. Fold it back unless it persists; and if a
     // jump was believed and the pitch then returns to where it was, take the return at once.
-    if (this.last !== null && t - this.lastT < 0.15) {
+    // It only defends a pitch that has held steady for a few frames, so a single bad frame at the
+    // start of a note can never become the reference that good frames get "corrected" to.
+    const recentlyHeard = this.last !== null && t - this.lastT < 0.15;
+    if (recentlyHeard && this.steady >= 4) {
       const d = m - this.last, ad = Math.abs(d);
       const octs = Math.round(ad / 12);
       if (octs >= 1 && Math.abs(ad - 12 * octs) < 0.8) {
@@ -171,14 +175,22 @@ export class PitchTracker {
         else { this.jumpRun = 0; this.beforeJump = { m: this.last, t }; this.recent.length = 0; }
       } else this.jumpRun = 0;
     }
+    this.steady = recentlyHeard && Math.abs(m - this.last) < 1 ? this.steady + 1 : 0;
+    this.last = m; this.lastT = t;
 
-    this.voicedRun++;
-    this.recent.push(m);
-    if (this.recent.length > this.speed.median) this.recent.shift();
+    // Onset: show nothing until the first readings of a note agree with each other (within a semitone).
+    if (!this.established) {
+      this.onsetVals.push(m);
+      const k = this.speed.onset, tail = this.onsetVals.slice(-k);
+      if (tail.length < k || Math.max(...tail) - Math.min(...tail) > 1) return { midi: null, centre: null, rms: res.rms, clarity: res.clarity };
+      this.established = true; this.onsetVals.length = 0;
+      this.recent = tail.slice(-this.speed.median);
+    } else {
+      this.recent.push(m);
+      if (this.recent.length > this.speed.median) this.recent.shift();
+    }
     const sorted = [...this.recent].sort((a, b) => a - b);
     const med = sorted[sorted.length >> 1];
-    this.last = m; this.lastT = t;
-    if (this.voicedRun < this.speed.onset) return { midi: null, centre: null, rms: res.rms, clarity: res.clarity };
 
     // Centre: mean over the last ~quarter second, which averages out classical vibrato (5–7 Hz).
     // A move of more than 1.5 semitones from the centre is a new note, not vibrato: start afresh.
