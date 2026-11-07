@@ -1,7 +1,8 @@
 // End-to-end check in real browser engines: node tools/check.mjs
 //  1. WebKit (Safari's engine) at iPhone size: loads, decodes all piano samples, keys play, settings open.
 //  2. Chrome with a fake microphone singing C4 D4 E4 F4 G4 with vibrato: readout, range and graph follow.
-// Screenshots go to tests/out/.
+// Screenshots go to tests/out/. To check the published site instead of a local copy:
+//   APP_URL=https://zacheld.github.io/pitch-piano/ node tools/check.mjs
 import { webkit, chromium } from 'playwright-core';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -10,10 +11,11 @@ import path from 'node:path';
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const out = path.join(root, 'tests/out');
 fs.mkdirSync(out, { recursive: true });
-const PORT = 8137, APP = `http://localhost:${PORT}/`;
+const PORT = 8137, APP = process.env.APP_URL || `http://localhost:${PORT}/`;
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const server = spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), String(PORT)], { stdio: 'ignore' });
+const server = process.env.APP_URL ? null : spawn(process.execPath, [path.join(root, 'tools/serve.mjs'), String(PORT)], { stdio: 'ignore' });
 await new Promise((r) => setTimeout(r, 400));
+console.log('Checking ' + APP);
 const problems = [];
 const ok = (cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) problems.push(msg); };
 
@@ -123,6 +125,21 @@ try {
   p2.on('pageerror', (e) => errs2.push(e.message));
   await p2.goto(APP);
   await p2.waitForFunction(() => window.__pp && window.__pp.piano.ready, null, { timeout: 30000 });
+  // offline copy: the service worker should store the app and all 42 piano notes
+  const cached = await p2.evaluate(async () => {
+    const reg = await Promise.race([navigator.serviceWorker.ready, new Promise((r) => setTimeout(() => r(null), 20000))]);
+    if (!reg) return { sw: false, n: 0, samples: 0 };
+    for (let i = 0; i < 40; i++) {
+      const keys = (await caches.keys());
+      let urls = [];
+      for (const k of keys) urls = urls.concat((await (await caches.open(k)).keys()).map((r) => r.url));
+      const samples = urls.filter((u) => u.endsWith('.m4a')).length;
+      if (samples >= 42) return { sw: true, n: urls.length, samples };
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return { sw: true, n: -1, samples: -1 };
+  });
+  ok(cached.sw && cached.samples === 42, `offline copy saved (service worker ${cached.sw ? 'on' : 'off'}, ${cached.n} files, ${cached.samples} piano notes)`);
   await p2.locator('#startBtn').click();
   await p2.waitForFunction(() => window.__pp.listening, null, { timeout: 5000 });
   const seen = new Set();
@@ -148,7 +165,7 @@ try {
   ok(errs2.length === 0, 'no errors in Chrome' + (errs2.length ? ': ' + errs2.join(' | ') : ''));
   await ch.close();
 } finally {
-  server.kill();
+  if (server) server.kill();
 }
 console.log(problems.length ? `\n${problems.length} problem(s)` : '\nall checks passed');
 process.exit(problems.length ? 1 : 0);
