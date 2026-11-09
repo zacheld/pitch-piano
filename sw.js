@@ -1,12 +1,17 @@
-// Offline support: the whole app, piano included (~3 MB), is stored on the phone at install.
-// Each release gets a new VERSION; the new copy downloads in the background and the old one is removed.
-const VERSION = 'pitch-piano-1.1.2';
+// Offline support: the whole app, piano included (~3 MB), is stored on the phone.
+// - App files (page, code, icons): fetched fresh when online (so an update or fix shows up the next
+//   time you open it), falling back to the stored copy when offline or the network is slow.
+// - Piano samples: always from the stored copy (they never change).
+// Each release gets a new VERSION; the old stored copy is removed once the new one is in place.
+const VERSION = 'pitch-piano-1.1.3';
 const CORE = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/pitch.js', 'js/notes.js', 'js/graph.js', 'js/keyboard.js', 'js/piano-audio.js',
+  'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'icons/icon-v2-180.png', 'icons/icon-v2-192.png', 'icons/icon-v2-512.png',
   'samples/index.json',
 ];
+const NETWORK_WAIT_MS = 2500;
 
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
@@ -25,19 +30,40 @@ self.addEventListener('activate', (e) => {
   })());
 });
 
+const stored = (req) => caches.match(req, { ignoreSearch: true });
+
+async function freshFirst(req) {
+  const url = new URL(req.url);
+  url.search = '';
+  try {
+    const res = await Promise.race([
+      fetch(url.href, { cache: 'no-cache', credentials: 'same-origin' }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('slow network')), NETWORK_WAIT_MS)),
+    ]);
+    if (res.ok) {
+      const copy = res.clone();
+      caches.open(VERSION).then((c) => c.put(url.href, copy)).catch(() => {});
+      return res;
+    }
+    return (await stored(req)) || res;
+  } catch (err) {
+    const hit = await stored(req);
+    if (hit) return hit;
+    if (req.mode === 'navigate') {
+      const page = await caches.match('index.html');
+      if (page) return page;
+    }
+    throw err;
+  }
+}
+
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
-  e.respondWith((async () => {
-    const hit = await caches.match(e.request, { ignoreSearch: true });
-    if (hit) return hit;
-    try {
-      return await fetch(e.request);
-    } catch (err) {
-      if (e.request.mode === 'navigate') {
-        const page = await caches.match('index.html');
-        if (page) return page;
-      }
-      throw err;
-    }
-  })());
+  const url = new URL(e.request.url);
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.endsWith('.m4a')) {
+    e.respondWith(stored(e.request).then((hit) => hit || fetch(e.request)));
+    return;
+  }
+  e.respondWith(freshFirst(e.request));
 });

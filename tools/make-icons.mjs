@@ -1,6 +1,7 @@
 // Renders the app icon: node tools/make-icons.mjs
 // Drawn once at 1024 px, then scaled down with macOS `sips` (rendering tiny sizes directly in a
-// headless browser produced a broken 180 px icon). Writes icons/icon-v2-{180,192,512}.png.
+// headless browser produced a broken 180 px icon). Writes icons/icon-{180,192,512}.png and identical
+// icon-v2-* copies. Never delete an icon name that has been published: saved pages may still use it.
 import { chromium } from 'playwright-core';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -67,7 +68,11 @@ try {
   await browser.close();
   for (const old of fs.readdirSync(path.join(root, 'icons'))) fs.unlinkSync(path.join(root, 'icons', old));
   for (const size of [180, 192, 512]) {
-    execFileSync('sips', ['-s', 'format', 'png', '-z', String(size), String(size), master, '--out', path.join(root, `icons/icon-v2-${size}.png`)], { stdio: 'ignore' });
+    const out = path.join(root, `icons/icon-${size}.png`);
+    execFileSync('sips', ['-s', 'format', 'png', '-z', String(size), String(size), master, '--out', out], { stdio: 'ignore' });
+    // same image under the v2 name too: a copy of the page saved on a phone may point at either name,
+    // and an icon address that 404s makes iPhone show a plain letter instead
+    fs.copyFileSync(out, path.join(root, `icons/icon-v2-${size}.png`));
   }
   console.log('icons written: ' + fs.readdirSync(path.join(root, 'icons')).join(', '));
 } finally {

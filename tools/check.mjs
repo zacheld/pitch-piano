@@ -156,6 +156,16 @@ try {
     return { sw: true, n: -1, samples: -1 };
   });
   ok(cached.sw && cached.samples === 42, `offline copy saved (service worker ${cached.sw ? 'on' : 'off'}, ${cached.n} files, ${cached.samples} piano notes)`);
+  // every icon address works, including names that older saved copies of the page point at
+  const icons = await p2.evaluate(async () => {
+    const man = await (await fetch('manifest.webmanifest', { cache: 'no-store' })).json();
+    const urls = new Set([document.querySelector('link[rel=apple-touch-icon]').getAttribute('href'),
+      ...man.icons.map((i) => i.src), 'icons/icon-v2-180.png', 'icons/icon-v2-192.png', 'icons/icon-v2-512.png']);
+    const out = [];
+    for (const u of urls) { const r = await fetch(u, { cache: 'no-store' }); out.push(`${u} ${r.status} ${r.headers.get('content-type')}`); }
+    return out;
+  });
+  ok(icons.every((l) => / 200 image\/png$/.test(l)), 'all icon addresses load (' + icons.length + ')' + (icons.every((l) => / 200 /.test(l)) ? '' : ': ' + icons.join(' | ')));
   await p2.locator('#startBtn').click();
   await p2.waitForFunction(() => window.__pp.listening, null, { timeout: 5000 });
   const routeOn = await p2.evaluate(() => ({ route: window.__pp.piano.route, playing: window.__pp.piano.el && !window.__pp.piano.el.paused }));
@@ -184,6 +194,12 @@ try {
   await p2.locator('#micBtn').click();
   const routeOff = await p2.evaluate(() => ({ route: window.__pp.piano.route, paused: window.__pp.piano.el.paused, listening: window.__pp.listening }));
   ok(!routeOff.listening && routeOff.route === 'direct' && routeOff.paused, `after stopping, piano is back on the normal path (${routeOff.route})`);
+  // with no internet at all, the app still opens from its stored copy, piano included
+  await ctxC.setOffline(true);
+  await p2.reload();
+  const offline = await p2.waitForFunction(() => window.__pp && window.__pp.piano.ready && window.__pp.piano.samples.length === 42, null, { timeout: 20000 }).then(() => true, () => false);
+  ok(offline, 'opens and plays with no internet');
+  await ctxC.setOffline(false);
   ok(errs2.length === 0, 'no errors in Chrome' + (errs2.length ? ': ' + errs2.join(' | ') : ''));
   await ch.close();
 } finally {
