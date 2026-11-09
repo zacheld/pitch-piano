@@ -3,7 +3,7 @@
 //   time you open it), falling back to the stored copy when offline or the network is slow.
 // - Piano samples: always from the stored copy (they never change).
 // Each release gets a new VERSION; the old stored copy is removed once the new one is in place.
-const VERSION = 'pitch-piano-1.2.0';
+const VERSION = 'pitch-piano-1.2.1';
 const CORE = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/pitch.js', 'js/notes.js', 'js/graph.js', 'js/keyboard.js', 'js/piano-audio.js',

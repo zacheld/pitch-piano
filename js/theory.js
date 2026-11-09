@@ -104,7 +104,7 @@ const LESSONS = {
       { text: '<b>I, IV and V</b> do most of the work. V wants to go home to I: V → I is the strongest ending (an <b>authentic cadence</b>). IV → I is the gentler <b>plagal</b> cadence — the “A-men” at the end of a hymn.',
         key, items: [{ notes: triads[4], state: 'pending', label: 'V' }, { notes: triads[0], state: 'good', label: 'I' }, { notes: triads[3], state: 'pending', label: 'IV' }, { notes: triads[0], state: 'good', label: 'I' }],
         play: [...chordSeq([triads[4], triads[0]]), { notes: [], dur: 0.4 }, ...chordSeq([triads[3], triads[0]])] },
-      { text: '<b>Why singers care.</b> In a choir your note is one part of a chord. A pure (beatless) major 3rd is about <b>14 cents narrower</b> than the piano’s, so choirs often tune the 3rd of a major chord slightly low; the leading tone (ti) tends to lean up toward do.',
+      { text: '<b>Why singers care.</b> In a choir your note is one part of a chord. A pure (beatless) major 3rd is about <b>14 cents narrower</b> than the piano’s, so singers tuning by ear place the 3rd of a major chord slightly low. Early-music practice goes further: in just or meantone tuning, sharped notes sit low and flatted notes high. (Many modern choirs instead lean the leading tone up toward do.)',
         key, items: [{ notes: triads[0], state: 'pending', label: 'the 3rd: tune it a touch low' }], play: arp(triads[0]) },
     ];
   },

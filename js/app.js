@@ -15,7 +15,7 @@ import { TOPICS, THEORY_ITEMS } from './theory.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.2.1';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
