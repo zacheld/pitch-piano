@@ -3,12 +3,13 @@
 //   time you open it), falling back to the stored copy when offline or the network is slow.
 // - Piano samples: always from the stored copy (they never change).
 // Each release gets a new VERSION; the old stored copy is removed once the new one is in place.
-const VERSION = 'pitch-piano-1.1.3';
+const VERSION = 'pitch-piano-1.1.4';
 const CORE = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/pitch.js', 'js/notes.js', 'js/graph.js', 'js/keyboard.js', 'js/piano-audio.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'icons/icon-v2-180.png', 'icons/icon-v2-192.png', 'icons/icon-v2-512.png',
+  'icons/icon-v3-180.png', 'icons/icon-v3-192.png', 'icons/icon-v3-512.png',
   'samples/index.json',
 ];
 const NETWORK_WAIT_MS = 2500;

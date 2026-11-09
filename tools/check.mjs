@@ -160,7 +160,7 @@ try {
   const icons = await p2.evaluate(async () => {
     const man = await (await fetch('manifest.webmanifest', { cache: 'no-store' })).json();
     const urls = new Set([document.querySelector('link[rel=apple-touch-icon]').getAttribute('href'),
-      ...man.icons.map((i) => i.src), 'icons/icon-v2-180.png', 'icons/icon-v2-192.png', 'icons/icon-v2-512.png']);
+      ...man.icons.map((i) => i.src), ...['icon', 'icon-v2', 'icon-v3'].flatMap((n) => [180, 192, 512].map((z) => `icons/${n}-${z}.png`))]);
     const out = [];
     for (const u of urls) { const r = await fetch(u, { cache: 'no-store' }); out.push(`${u} ${r.status} ${r.headers.get('content-type')}`); }
     return out;
