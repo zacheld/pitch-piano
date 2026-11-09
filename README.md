@@ -28,7 +28,7 @@ The main screen (home) is always the pitch display and piano. Everything else is
 - **Warm-ups** — straw routine (Titze), and scales, arpeggios, octave slides and lip-trill patterns that move up your range a semitone at a time with the notes shown ahead; a cool-down.
 - **Sing** — sight-singing, intervals, echo, pitch memory (with distracting notes in between at medium/hard), scale & return.
 - **Ear training** — scale degrees, chords by ear, note naming.
-- **Part-singing** — sing one voice (tenor by default) of a Bach chorale while the piano plays the other three; your part scrolls in ahead of you and each note is scored.
+- **Part-singing** — sing one voice (tenor by default) of a Bach chorale while the piano plays the other three. The music scrolls past a play line as a score: all four parts as in a hymn book (soprano and alto on the treble staff, tenor and bass on the bass staff, words between), or just your part, larger, in your clef, or as bars on the pitch graph. Your part is white and each note turns green or orange as you sing it, with your pitch traced on your staff. Drag the music sideways to read ahead or look back; ▶ My part and ▶ All play it to you first.
 - **Rhythm** — learn to count (numbers or Takadimi), tap the rhythm (per-note early/late in ms), hear the rhythm, vowel on the beat (consonant timing), metronome.
 - **Theory** — keys & key signatures, finding the key, chords: lessons and quizzes.
 - **Early music** — modes (lesson and quiz), tuning lab (pure intervals against a drone), old clefs.

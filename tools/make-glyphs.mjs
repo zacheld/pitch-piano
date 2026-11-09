@@ -20,7 +20,8 @@ const WANT = {
   accidentalSharp: 0xE262, accidentalFlat: 0xE260, accidentalNatural: 0xE261,
   brace: 0xE000,
   restWhole: 0xE4E3, restHalf: 0xE4E4, restQuarter: 0xE4E5, rest8th: 0xE4E6, rest16th: 0xE4E7,
-  flag8thUp: 0xE240, flag16thUp: 0xE242, augmentationDot: 0xE1E7, tuplet3: 0xE883,
+  flag8thUp: 0xE240, flag16thUp: 0xE242, flag8thDown: 0xE241, flag16thDown: 0xE243, augmentationDot: 0xE1E7, tuplet3: 0xE883,
+  fermataAbove: 0xE4C0, fermataBelow: 0xE4C1,
   timeSig0: 0xE080, timeSig1: 0xE081, timeSig2: 0xE082, timeSig3: 0xE083, timeSig4: 0xE084,
   timeSig5: 0xE085, timeSig6: 0xE086, timeSig7: 0xE087, timeSig8: 0xE088, timeSig9: 0xE089,
 };

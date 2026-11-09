@@ -19,7 +19,7 @@ import { EARLY } from './early.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 
-const VERSION = '1.7.0';
+const VERSION = '1.8.0';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -415,9 +415,12 @@ function checkMic(ts, buf) {
 }
 
 function frame(ts) {
-  const dt = Math.min(0.1, Math.max(0, (ts - lastTs) / 1000));
+  const raw = Math.max(0, (ts - lastTs) / 1000);
+  const dt = Math.min(0.1, raw); // for animations
   lastTs = ts;
-  if (!paused) vt += dt;
+  // the app clock keeps real time through slow frames (so it stays in step with the audio clock);
+  // only a long gap (the app was in the background) is skipped
+  if (!paused) vt += raw > 0.5 ? dt : raw;
 
   if (listening && !paused && mic && !replay && ts - lastDetect >= 14) { // ~60 analyses a second, even on 120 Hz screens
     lastDetect = ts;
@@ -658,7 +661,7 @@ function startPractice(id, { keepPlan = false, from } = {}) {
   let def = exerciseById(id) || THEORY_ITEMS[id] || RHYTHM.find((x) => x.id === id) || WARMUPS.find((x) => x.id === id) || EARLY.find((x) => x.id === id);
   if (!def && id.startsWith('chorale:')) {
     const c = (chorales || []).find((x) => x.id === id.slice(8));
-    if (c) def = { id: 'partsing', title: 'Part-singing', make: (e, o) => new PartSinging(e, { ...o, chorale: c, part: S.part || partFor() }) };
+    if (c) def = { id: 'partsing', title: 'Part-singing', make: (e, o) => new PartSinging(e, { ...o, chorale: c, part: S.part || partFor(), view: S.partView || 'all' }) };
   }
   if (!def) return;
   const keep = plan, keepFrom = practiceFrom;
@@ -883,7 +886,7 @@ let chorales = null;
 const partFor = () => ({ bass: 'B', baritone: 'B', tenor: 'T', alto: 'A', mezzo: 'A', soprano: 'S' }[S.voice] || 'T');
 function openChoraleDetail(c) {
   openSheet(choraleLabel(c), (body) => {
-    body.appendChild(el('p', 'ex-detail-p', `${choraleBlurb(c)}. Easy: slower, with your part played quietly as a guide. Medium: normal speed, no guide. Hard: faster.`));
+    body.appendChild(el('p', 'ex-detail-p', `${choraleBlurb(c)}${c.lyrics && c.lyrics.length ? ', with words' : ''}. Easy: slower, with your part played quietly as a guide. Medium: normal speed, no guide. Hard: faster.`));
     const g = section(body, 'Your part');
     const seg = el('div', 'seg');
     const cur = S.part || partFor();
@@ -893,6 +896,16 @@ function openChoraleDetail(c) {
       seg.appendChild(b);
     }
     const row = el('div', 'row stack'); row.appendChild(seg); g.appendChild(row);
+    const g2 = section(body, 'Show');
+    const seg2 = el('div', 'seg');
+    for (const [v, name] of [['all', 'All four parts'], ['mine', 'My part'], ['graph', 'Pitch graph']]) {
+      const b = el('button', (S.partView || 'all') === v ? 'sel' : '', name);
+      b.addEventListener('click', () => { S.partView = v; save(); for (const x of seg2.children) x.classList.toggle('sel', x === b); });
+      seg2.appendChild(b);
+    }
+    const row2 = el('div', 'row stack'); row2.appendChild(seg2);
+    row2.appendChild(el('div', 'hint', 'All four parts: the score as printed in hymn books, your part in white. My part: just your line, larger. Pitch graph: your notes as bars, with your voice as a line.'));
+    g2.appendChild(row2);
     levelPicker(body, { id: 'partsing', levels: true });
     const go = el('button', 'start-ex', 'Start');
     go.addEventListener('click', () => startPractice('chorale:' + c.id, { from: 'part' }));

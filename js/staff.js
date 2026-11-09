@@ -5,6 +5,7 @@
 
 import { GLYPHS, ENGRAVING } from './glyphs.js';
 import { drawRhythmView } from './rhythm-view.js';
+import { drawScoreView } from './score-view.js';
 import { CLEF_VIEWS, STAVES, spell, positionOn, ledgers, stavesFor, accidentalShown, signatureLetters,
   continuousPosition, noteText, noteName, solfege } from './notation.js';
 
@@ -32,6 +33,15 @@ export class StaffView {
     this.dirty = true;
     new ResizeObserver(() => this.resize()).observe(canvas);
     this.resize();
+    // dragging sideways: lets an exercise (the chorale score) scroll through its music
+    let dragX = null;
+    canvas.addEventListener('pointerdown', (e) => { if (this.exercise && this.exercise.drag) { dragX = e.clientX; try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ok */ } } });
+    canvas.addEventListener('pointermove', (e) => {
+      if (dragX == null || !this.exercise || !this.exercise.drag) return;
+      this.exercise.drag(e.clientX - dragX); dragX = e.clientX; this.dirty = true;
+    });
+    const end = () => { dragX = null; };
+    canvas.addEventListener('pointerup', end); canvas.addEventListener('pointercancel', end);
   }
 
   resize() {
@@ -122,6 +132,7 @@ export class StaffView {
     g.fillRect(0, 0, w, h);
     const ex = this.exercise;
     if (ex && (ex.rhythm || ex.rows || ex.timing || ex.meter)) { drawRhythmView(g, w, h, this.padTop, this.padBottom, ex); return; }
+    if (ex && ex.score) { drawScoreView(g, w, h, this.padTop, this.padBottom, ex); return; }
     const L = this.layout();
     this.drawStaves(L);
     if (this.exercise) this.drawExercise(L);

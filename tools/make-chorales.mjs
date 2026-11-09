@@ -2,6 +2,9 @@
 // encodings distributed with music21, github.com/cuthbertLab/music21). macOS: uses `unzip`.
 // Usage: node tools/make-chorales.mjs <download-dir> [max]
 // Keeps 4-part chorales in 3/4 or 4/4 whose tenor stays within C3–A4 and that run at most 72 beats.
+// Per chorale: voices (tied notes merged, for playback and scoring) and, for the score view, the notes
+// as written (score: [q, dur, letter 0–6, alter, octave, tied-to-next, fermata], rests as [q, dur, -1]),
+// bar starts (bars, a pickup bar first if there is one) and the words under the soprano (lyrics: [q, text, syllabic]).
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -20,11 +23,12 @@ function parse(xml) {
   const parts = [...xml.matchAll(/<part id="([^"]+)">([\s\S]*?)<\/part>/g)];
   const names = Object.fromEntries([...xml.matchAll(/<score-part id="([^"]+)">[\s\S]*?<part-name>([^<]*)<\/part-name>/g)].map((m) => [m[1], m[2].trim()]));
   let fifths = 0, mode = 'major', beats = 4, beatType = 4;
-  const voices = {};
-  for (const [, id, body] of parts) {
+  const voices = {}, score = {}, bars = [], lyrics = [];
+  for (const [pi, [, id, body]] of parts.entries()) {
     let divisions = 1, q = 0;
-    const notes = [];
+    const notes = [], written = [];
     for (const [, mbody] of body.matchAll(/<measure[^>]*>([\s\S]*?)<\/measure>/g)) {
+      if (pi === 0) bars.push(+q.toFixed(4));
       for (const tok of mbody.matchAll(/<attributes>([\s\S]*?)<\/attributes>|<(note|backup|forward)\b[^>]*>([\s\S]*?)<\/\2>/g)) {
         if (tok[1] !== undefined) {
           const a = tok[1];
@@ -41,11 +45,15 @@ function parse(xml) {
         if (/<chord\s*\/>/.test(n) || /<grace/.test(n)) continue;
         const rest = /<rest/.test(n);
         let midi = null;
+        const tieStop = /<tie type="stop"/.test(n), fermata = /<fermata/.test(n);
         if (!rest) {
           const p = tag(n, 'pitch');
-          midi = 12 * (+tag(p, 'octave') + 1) + STEP[tag(p, 'step').trim()] + +(tag(p, 'alter') || 0);
-        }
-        const tieStop = /<tie type="stop"/.test(n), fermata = /<fermata/.test(n);
+          const step = tag(p, 'step').trim(), alter = +(tag(p, 'alter') || 0), octave = +tag(p, 'octave');
+          midi = 12 * (octave + 1) + STEP[step] + alter;
+          written.push([+q.toFixed(4), +dur.toFixed(4), 'CDEFGAB'.indexOf(step), alter, octave, /<tie type="start"/.test(n) ? 1 : 0, fermata ? 1 : 0]);
+          const lyr = /<lyric\b[^>]*>([\s\S]*?)<\/lyric>/.exec(n);
+          if (pi === 0 && lyr && tag(lyr[1], 'text')) lyrics.push([+q.toFixed(4), tag(lyr[1], 'text').trim(), (tag(lyr[1], 'syllabic') || 'single').trim()]);
+        } else written.push([+q.toFixed(4), +dur.toFixed(4), -1]);
         const last = notes[notes.length - 1];
         if (tieStop && last && last[2] === midi) { last[1] += dur; if (fermata) last[3] = 1; }
         else notes.push([+q.toFixed(4), +dur.toFixed(4), midi, fermata ? 1 : 0]);
@@ -54,9 +62,9 @@ function parse(xml) {
     }
     const name = (names[id] || '').toLowerCase();
     const key = name.startsWith('sop') ? 'S' : name.startsWith('alt') ? 'A' : name.startsWith('ten') ? 'T' : name.startsWith('bas') ? 'B' : null;
-    if (key) voices[key] = notes.filter((x) => x[2] !== null);
+    if (key) { voices[key] = notes.filter((x) => x[2] !== null); score[key] = written; }
   }
-  return { fifths, mode, time: [beats, beatType], voices };
+  return { fifths, mode, time: [beats, beatType], voices, score, bars, lyrics };
 }
 
 const list = JSON.parse(execFileSync('gh', ['api', API, '--jq', '[.[].name | select(test("^bwv[0-9.]+\\\\.mxl$"))]']).toString());
@@ -82,7 +90,7 @@ for (const name of list) {
   const tenor = v.T.map((x) => x[2]);
   if (end > 72 || Math.min(...tenor) < 48 || Math.max(...tenor) > 69) continue;
   const bwv = name.replace('bwv', '').replace('.mxl', '');
-  out.push({ id: 'bwv' + bwv, bwv, fifths: c.fifths, mode: c.mode, time: c.time, length: end, voices: v });
+  out.push({ id: 'bwv' + bwv, bwv, fifths: c.fifths, mode: c.mode, time: c.time, length: end, voices: v, score: c.score, bars: c.bars.filter((b) => b < end - 1e-6), lyrics: c.lyrics });
   console.log(`BWV ${bwv}: ${c.time.join('/')}, ${c.fifths} fifths ${c.mode}, ${end} beats, tenor ${Math.min(...tenor)}–${Math.max(...tenor)}`);
 }
 fs.mkdirSync(path.join(root, 'data'), { recursive: true });
