@@ -21,27 +21,42 @@ export function drawRhythmView(g, w, h, padTop, padBottom, view) {
   const rows = view.rows || (view.rhythm ? view.rhythm.bars.map((_, i) => ({ r: view.rhythm, bar: i })) : []);
   if (!rows.length) return;
   const items = view.rows ? view.rows.map((r, i) => ({ r, bar: 0, letter: 'ABC'[i] })) : rows;
-  const avail = h - padTop - padBottom;
-  const rowH = Math.min(avail / items.length, 150);
-  const sp = Math.max(7, Math.min(rowH / 8.5, 13));
-  const top = padTop + (avail - rowH * items.length) / 2;
+  const avail = Math.max(40, h - padTop - padBottom);
+  // Room one line of music needs, in staff spaces: above the line (stems, beams, the triplet 3, tap
+  // results) and below it (counting syllables). Everything is sized so it all fits in the space between
+  // the title bar and the panel, on any screen: on a short screen two bars share a line instead.
+  const swing = items[0].r.swing ? 1.4 : 0;
+  const above = view.results ? 6.8 : 5.2, below = view.syllables ? 3.4 : 2.4, gap = 0.6;
+  const events = Math.max(1, ...items.map((it) => timeline(it.r).filter((e) => e.bar === it.bar).length));
+  let best = null;
+  for (let per = 1; per <= (view.rows ? 1 : Math.min(2, items.length)); per++) {
+    const lines = Math.ceil(items.length / per);
+    const spH = avail / (lines * (above + below + gap) + swing);
+    const spW = (w - 28) / per / (events * 2 + 4.5);
+    const sp = Math.min(13, spH, spW);
+    if (!best || sp > best.sp + 0.5) best = { per, lines, sp };
+  }
+  const { per, lines } = best;
+  const sp = Math.max(5, best.sp);
+  const lineH = (above + below + gap) * sp;
+  const top = padTop + Math.max(0, (avail - lineH * lines - swing * sp) / 2);
+  const colW = (w - 28) / per;
   let attackIdx = 0;
   items.forEach((it, i) => {
-    const y = top + rowH * i + rowH * 0.5;
-    const first = i === 0 || view.rows;
-    attackIdx = drawBar(g, w, y, sp, it.r, it.bar, { ...view, showMeter: first, letter: it.letter, attackStart: view.rows ? 0 : attackIdx });
+    const line = Math.floor(i / per), col = i % per;
+    const y = top + swing * sp + line * lineH + (gap / 2 + above) * sp;
+    attackIdx = drawBar(g, w, y, sp, it.r, it.bar, { ...view, showMeter: i === 0 || !!view.rows, letter: it.letter,
+      left: 14 + col * colW, right: 14 + (col + 1) * colW, attackStart: view.rows ? 0 : attackIdx });
   });
-  // swing marking
-  const r0 = items[0].r;
-  if (r0.swing) {
+  if (swing) {
     g.fillStyle = C.near; g.font = `600 ${Math.max(11, sp * 1.1)}px -apple-system, system-ui, sans-serif`;
-    g.textAlign = 'left'; g.textBaseline = 'middle';
-    g.fillText('Swing: play eighths long–short', 14, top + 6);
+    g.textAlign = 'left'; g.textBaseline = 'top';
+    g.fillText('Swing: play eighths long–short', 14, top);
   }
 }
 
 function drawBar(g, w, y, sp, r, barIndex, view) {
-  const left = 14, right = w - 14;
+  const left = view.left ?? 14, right = view.right ?? w - 14;
   let x0 = left + (view.letter ? sp * 2.4 : 0);
   if (view.letter) {
     g.fillStyle = C.label; g.font = `700 ${sp * 1.6}px -apple-system, system-ui, sans-serif`; g.textAlign = 'left'; g.textBaseline = 'middle';

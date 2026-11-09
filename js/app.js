@@ -19,7 +19,7 @@ import { EARLY } from './early.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -60,8 +60,20 @@ document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: fals
 document.addEventListener('touchmove', (e) => { if (!e.target.closest('.scroll')) e.preventDefault(); }, { passive: false });
 // Stopping the touch itself is what keeps iOS from showing its magnifying-glass loupe on a long press
 // or a drag (CSS alone doesn't). Buttons, sliders and the settings list keep normal touches.
-document.addEventListener('touchstart', (e) => { if (!e.target.closest('button, input, .scroll, .scrim')) e.preventDefault(); }, { passive: false });
+document.addEventListener('touchstart', (e) => { if (!e.target.closest('button, input, select, .scroll, .scrim')) e.preventDefault(); }, { passive: false });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ---------- problems: kept so Settings → Microphone status can show what went wrong on the phone ----------
+const problems = store.get('problems', []);
+function noteProblem(msg) {
+  msg = String(msg).slice(0, 160);
+  const last = problems[problems.length - 1];
+  if (last && last.m === msg) { last.n = (last.n || 1) + 1; } else problems.push({ t: new Date().toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), m: msg });
+  while (problems.length > 6) problems.shift();
+  store.set('problems', problems);
+}
+window.addEventListener('error', (e) => noteProblem(`${e.message} (${String(e.filename || '').split('/').pop()}:${e.lineno})`));
+window.addEventListener('unhandledrejection', (e) => noteProblem('Promise: ' + (e.reason && (e.reason.message || e.reason))));
 
 // ---------- audio ----------
 const setSession = (type) => { try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (e) { /* older iOS */ } };
@@ -76,11 +88,9 @@ const drone = new Drone(ctx, piano.out);
 const recorder = new Recorder(ctx, piano.out);
 
 // iOS starts audio suspended until a tap; resume on any touch (also after phone calls or other interruptions)
-let resumeMic = false;
 const wake = () => {
   if (ctx.state !== 'running') ctx.resume().catch(() => {});
   if (piano.route === 'stream' && piano.el && piano.el.paused) { const p = piano.el.play(); if (p && p.catch) p.catch(() => {}); }
-  if (resumeMic && !listening && !starting) { resumeMic = false; startMic(); }
 };
 for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(ev, wake, { capture: true, passive: true });
 
@@ -89,6 +99,9 @@ const tracker = new PitchTracker({ a4: S.a4, sensitivity: S.sensitivity, speed: 
 const hold = new NoteHold();
 const transcriber = new Transcriber({ minHold: 0.25, skip: 0.12 });
 let mic = null, listening = false, paused = false, starting = false;
+let micLevel = 0, micDb = -120;           // input level, for the ring on the mic button and the status panel
+let deadSince = null, micRestartAt = 0, micWarned = false; // watchdog: a live mic is never perfectly silent or frozen
+const lastSamples = new Float32Array(3);
 let vt = 0;                  // app clock in seconds; stands still while paused
 let shown = null, shownCents = 0, lastVoiced = -10, lastCentre = null;
 let stable = { note: null, since: 0 };
@@ -167,12 +180,14 @@ async function startMic() {
     return showMsg('This browser can’t use the microphone. On iPhone, open the app from Safari or your Home Screen.');
   }
   starting = true; render();
+  const attempt = ++micAttempt;
   piano.useCallAudio(S.callAudio); // must happen inside the tap, before any waiting
   setSession('play-and-record');
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: S.echo, noiseSuppression: false, autoGainControl: false },
     });
+    if (attempt !== micAttempt) { for (const t of stream.getTracks()) t.stop(); return; } // cancelled meanwhile
     if (ctx.state !== 'running') await ctx.resume().catch(() => {});
     const src = ctx.createMediaStreamSource(stream);
     const analyser = ctx.createAnalyser();
@@ -180,20 +195,33 @@ async function startMic() {
     const sink = ctx.createGain(); sink.gain.value = 0; // keeps the analyser running; makes no sound
     src.connect(analyser); analyser.connect(sink); sink.connect(ctx.destination);
     mic = { stream, src, analyser, sink, buf: new Float32Array(analyser.fftSize), det: new PitchDetector({ sampleRate: ctx.sampleRate, size: analyser.fftSize }) };
-    for (const t of stream.getAudioTracks()) t.addEventListener('ended', () => stopMic());
+    for (const t of stream.getAudioTracks()) {
+      t.addEventListener('ended', () => { noteProblem('The microphone was ended by the phone'); stopMic(); });
+      t.addEventListener('mute', () => noteProblem('The phone paused the microphone'));
+    }
     tracker.reset(); hold.reset(); transcriber.reset();
+    shown = null; deadSince = null; micWarned = false;
     listening = true; paused = false;
     showMsg(null);
   } catch (err) {
+    if (attempt !== micAttempt) return;
     piano.useCallAudio(false);
     setSession('playback');
+    noteProblem('Microphone didn’t start: ' + (err && (err.name + ' ' + (err.message || '')) || 'error'));
     const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
     showMsg(denied
-      ? 'Microphone access is off. Tap Start listening again and choose Allow. If it doesn’t ask, check Settings → Apps → Safari → Microphone.'
+      ? 'Microphone access is off. Tap the mic again and choose Allow. If it doesn’t ask, check Settings → Apps → Safari → Microphone.'
       : 'Couldn’t start the microphone (' + (err && err.name || 'error') + ').');
   } finally {
-    starting = false; render();
+    if (attempt === micAttempt) { starting = false; render(); }
   }
+}
+let micAttempt = 0;
+/** Tapping the mic while it's still starting (e.g. the permission question never came) gives up on it. */
+function cancelMicStart() {
+  micAttempt++; starting = false;
+  piano.useCallAudio(false); setSession('playback');
+  render();
 }
 
 function stopMic() {
@@ -203,28 +231,36 @@ function stopMic() {
     try { mic.src.disconnect(); mic.analyser.disconnect(); mic.sink.disconnect(); } catch (e) { /* ok */ }
     mic = null;
   }
-  listening = false; paused = false;
+  listening = false; paused = false; micLevel = 0;
   piano.useCallAudio(false);
   setSession('playback');
   render();
 }
+function restartMic() { stopMic(); startMic(); }
 
 // Leaving the app with the mic on used to leave the sound dead on return (iOS pauses the capture and
-// the call-audio path). So: release the mic when the app goes to the background, and bring it back
-// with the first touch after returning (a touch is needed for iOS to allow audio again).
+// the call-audio path). So the mic is released when the app goes to the background; tap the mic to
+// turn it back on. (It used to restart by itself on the next touch, which could start it twice.)
+let micOffWhileAway = false;
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
-    if (listening) { resumeMic = true; stopMic(); }
+    if (listening) { micOffWhileAway = true; stopMic(); }
     return;
   }
   if (ctx.state !== 'running') ctx.resume().catch(() => {});
+  if (micOffWhileAway) { micOffWhileAway = false; showMsg('The mic turns off when you leave the app. Tap the mic to turn it back on.'); }
 });
 
 // ---------- readout ----------
 function renderReadout(voiced) {
-  $('readout').classList.toggle('idle', !voiced);
-  if (shown === null || (practice && S.hideLive)) {
-    setText($('rNote'), '–'); setText($('rLevel'), ''); setText($('rHz'), ''); setText($('rCents'), '');
+  const hint = starting ? 'Starting the mic…'
+    : !listening && !replay ? 'Tap the mic to start'
+    : practice && S.hideLive ? 'Your pitch shows after each note'
+    : shown === null ? 'Listening… sing a note' : null;
+  $('readout').classList.toggle('hint', !!hint);
+  $('readout').classList.toggle('idle', !voiced && !hint);
+  if (hint) {
+    setText($('rNote'), hint); setText($('rLevel'), ''); setText($('rHz'), ''); setText($('rCents'), '');
     return;
   }
   setText($('rNote'), spelledName(shown));
@@ -282,7 +318,9 @@ function showMsg(text) {
 $('toast').addEventListener('click', () => { $('toast').hidden = true; });
 
 function render() {
+  renderReadout(listening && vt - lastVoiced < 0.3);
   $('micBtn').classList.toggle('on', listening);
+  $('micBtn').classList.toggle('starting', starting);
   $('micBtn').setAttribute('aria-label', listening ? 'Stop listening' : 'Start listening');
   $('pauseBtn').disabled = !listening;
   $('pauseBtn').classList.toggle('paused', paused);
@@ -302,7 +340,7 @@ function render() {
 }
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-$('micBtn').addEventListener('click', () => (listening ? stopMic() : startMic()));
+$('micBtn').addEventListener('click', () => { if (starting) cancelMicStart(); else if (listening) stopMic(); else startMic(); });
 $('pauseBtn').addEventListener('click', () => { if (listening) { paused = !paused; render(); } });
 $('octDown').addEventListener('click', () => keyboard.shift(-1));
 $('octUp').addEventListener('click', () => keyboard.shift(1));
@@ -340,8 +378,43 @@ function processFrame(o, { record = true, rangeOk = true } = {}) {
 }
 
 // ---------- main loop ----------
-let lastTs = performance.now(), lastDetect = 0;
+let lastTs = performance.now(), lastDetect = 0, lastLoopError = '';
+// The next frame is requested first, so one bad frame can never stop the display for good.
 function loop(ts) {
+  requestAnimationFrame(loop);
+  try { frame(ts); } catch (e) {
+    const msg = `${e && e.message} @ ${String(e && e.stack || '').split('\n')[1] || ''}`.replace(/https?:[^ )]*\//g, '');
+    if (msg !== lastLoopError) { lastLoopError = msg; noteProblem('Display: ' + msg); console.error(e); }
+  }
+}
+
+/** Watchdog: a working microphone always has a little noise and always changes. Perfect silence or a
+ *  frozen buffer for a few seconds means iOS has stopped feeding it: restart it once, then say so. */
+function checkMic(ts, buf) {
+  let peak = 0;
+  for (let i = 0; i < buf.length; i += 4) { const a = Math.abs(buf[i]); if (a > peak) peak = a; }
+  const frozen = buf[0] === lastSamples[0] && buf[777] === lastSamples[1] && buf[buf.length - 1] === lastSamples[2];
+  lastSamples[0] = buf[0]; lastSamples[1] = buf[777]; lastSamples[2] = buf[buf.length - 1];
+  if (peak > 1e-7 && !frozen) { deadSince = null; if (micRestartAt && ts - micRestartAt > 10000) micRestartAt = 0; return; }
+  if (deadSince == null) { deadSince = ts; return; }
+  if (ts - deadSince < 2500) return;
+  deadSince = ts;
+  if (ctx.state !== 'running') {
+    ctx.resume().catch(() => {});
+    noteProblem(`Audio was ${ctx.state} while listening`);
+    showMsg('Tap anywhere to turn the sound back on.');
+  } else if (!micRestartAt) {
+    micRestartAt = ts;
+    noteProblem(peak <= 1e-7 ? 'Mic sent only silence; restarted it' : 'Mic input froze; restarted it');
+    setTimeout(restartMic, 0); // not in the middle of this frame
+  } else if (!micWarned) {
+    micWarned = true;
+    noteProblem('Mic still silent after a restart');
+    showMsg('The microphone isn’t picking up any sound. Turn the mic off and on. If that doesn’t help, close Pitch Piano completely (swipe it away) and open it again.');
+  }
+}
+
+function frame(ts) {
   const dt = Math.min(0.1, Math.max(0, (ts - lastTs) / 1000));
   lastTs = ts;
   if (!paused) vt += dt;
@@ -349,7 +422,11 @@ function loop(ts) {
   if (listening && !paused && mic && !replay && ts - lastDetect >= 14) { // ~60 analyses a second, even on 120 Hz screens
     lastDetect = ts;
     mic.analyser.getFloatTimeDomainData(mic.buf);
-    const o = tracker.push(mic.det.detect(mic.buf), vt);
+    checkMic(ts, mic.buf);
+    const res = mic.det.detect(mic.buf);
+    micDb = 20 * Math.log10(res.rms + 1e-9);
+    micLevel = Math.max(Math.min(1, Math.max(0, (micDb + 60) / 45)), micLevel - 0.06);
+    const o = tracker.push(res, vt);
     const muted = (playing || vt < muteUntil) && !(practice && practice.hearsItself);
     if (muted && practice) {
       processFrame({ midi: null, centre: null }, { rangeOk: false });
@@ -372,8 +449,11 @@ function loop(ts) {
   }
   if (stageView === 'graph' && graph.active(vt)) graph.draw(vt);
   if (stageView === 'staff' && (staff.active() || (live != null && S.staffLine))) staff.draw(vt, dt);
-  requestAnimationFrame(loop);
+  // the ring around the mic button follows what the mic hears
+  const ring = listening && !paused ? Math.round(micLevel * 20) / 20 : 0;
+  if (ring !== lastRing) { lastRing = ring; $('micBtn').style.setProperty('--lvl', ring); }
 }
+let lastRing = -1;
 
 // ---------- record and replay ----------
 async function toggleRecord() {
@@ -514,7 +594,7 @@ const env = {
   sol: (m, key) => solfege(m, key || practiceKey()),
   load: (id, d) => store.get('ex.' + id, d),
   save: (id, v) => store.set('ex.' + id, v),
-  startById: (id) => startPractice(id),
+  startById: (id) => startPractice(id),  // keeps the same ‹ back target
   tone: (m, seconds) => {
     const o = ctx.createOscillator(), a = ctx.createGain(), t = ctx.currentTime;
     o.frequency.value = midiToFreq(m, S.a4);
@@ -573,21 +653,25 @@ $('tapPad').addEventListener('pointerdown', (e) => {
   $('tapPad').classList.add('hit'); setTimeout(() => $('tapPad').classList.remove('hit'), 90);
 });
 
-function startPractice(id, { keepPlan = false } = {}) {
+let practiceFrom = null; // the menu section an exercise was started from (its ‹ back button returns there)
+function startPractice(id, { keepPlan = false, from } = {}) {
   let def = exerciseById(id) || THEORY_ITEMS[id] || RHYTHM.find((x) => x.id === id) || WARMUPS.find((x) => x.id === id) || EARLY.find((x) => x.id === id);
   if (!def && id.startsWith('chorale:')) {
     const c = (chorales || []).find((x) => x.id === id.slice(8));
     if (c) def = { id: 'partsing', title: 'Part-singing', make: (e, o) => new PartSinging(e, { ...o, chorale: c, part: S.part || partFor() }) };
   }
   if (!def) return;
-  const keep = plan;
+  const keep = plan, keepFrom = practiceFrom;
   stopPractice(); stopReplay();
   if (keepPlan) plan = keep;
+  practiceFrom = from !== undefined ? from : keepFrom;
+  const sec = practiceFrom && menuSection(practiceFrom);
+  setText($('exBack'), '‹ ' + (sec ? sec.short || sec.title : 'Menu'));
   closeSheet();
   const opts = { level: (S.levels || {})[def.id || id] || def.defaultLevel || 'medium' };
   practiceDef = def;
   practice = def.make(env, opts);
-  $('graphWrap').classList.add('exercising');
+  $('graphWrap').classList.add('exercising'); $('app').classList.add('exercising');
   $('exBar').hidden = false; $('exPanel').hidden = false;
   ui.title(def.title); ui.score(''); ui.question(''); ui.prompt(''); ui.answers(null); ui.buttons([]);
   setStageView('staff', true);
@@ -604,13 +688,14 @@ function stopPractice() {
   $('tapPad').hidden = true;
   practice = null; practiceDef = null;
   staff.setExercise(null);
-  $('graphWrap').classList.remove('exercising');
+  $('graphWrap').classList.remove('exercising'); $('app').classList.remove('exercising');
   $('exBar').hidden = true; $('exPanel').hidden = true;
   layoutExercise();
   setStageView(S.view);
   render();
 }
-$('exClose').addEventListener('click', stopPractice);
+$('exClose').addEventListener('click', () => { closeSheet(); stopPractice(); });
+$('exBack').addEventListener('click', () => { const from = practiceFrom; stopPractice(); if (from) openSection(from); else openMenu(); });
 $('practiceBtn').addEventListener('click', () => openMenu());
 
 // ---------- daily practice plan ----------
@@ -664,7 +749,7 @@ let plan = null;
 function startPlan() { plan = { steps: planSteps(S.planLength), i: 0 }; runPlanStep(); }
 function runPlanStep() {
   const st = plan.steps[plan.i];
-  startPractice(st.id, { keepPlan: true });
+  startPractice(st.id, { keepPlan: true, from: 'daily' });
   plan.end = Date.now() + st.min * 60000;
   $('exNext').hidden = false;
   $('exNext').textContent = plan.i < plan.steps.length - 1 ? 'Next ›' : 'Finish';
@@ -673,7 +758,7 @@ function runPlanStep() {
 function planTick() {
   if (!plan || !practiceDef) return;
   const left = Math.max(0, Math.round((plan.end - Date.now()) / 1000));
-  setText($('exTitle'), `${practiceDef.title} · ${plan.i + 1}/${plan.steps.length} · ${left ? fmtTime(left) : 'time!'}`);
+  setText($('exTitle'), `${plan.i + 1}/${plan.steps.length} · ${left ? fmtTime(left) : 'time!'} · ${practiceDef.title}`);
 }
 setInterval(planTick, 1000);
 $('exNext').addEventListener('click', () => {
@@ -690,10 +775,12 @@ $('exNext').addEventListener('click', () => {
 });
 
 // ---------- sheets (settings, practice, key) ----------
-function openSheet(title, build, { back = null } = {}) {
+function openSheet(title, build, { back = null, backLabel = 'Back', close = 'Done' } = {}) {
   setText($('sheetTitle'), title);
   $('sheetBack').hidden = !back;
   $('sheetBack').onclick = back;
+  setText($('sheetBack'), '‹ ' + backLabel);
+  setText($('doneBtn'), close);
   const body = $('sheetBody');
   body.textContent = '';
   body.scrollTop = 0;
@@ -713,17 +800,17 @@ const section = (body, title) => { body.appendChild(el('div', 'section-title', t
 
 // ---------- the menu: sections → items → (level) → start ----------
 const MENU = [
-  { id: 'sing', icon: '🎤', title: 'Sing', blurb: 'Sight-singing, intervals, echo, pitch memory, scale & return.',
+  { id: 'sing', title: 'Sing', blurb: 'Sight-singing, intervals, echo, pitch memory, scale & return.',
     items: () => EXERCISES.filter((x) => x.section === 'sing') },
-  { id: 'ear', icon: '👂', title: 'Ear training', blurb: 'Scale degrees, chords by ear, note naming.',
+  { id: 'ear', title: 'Ear training', short: 'Ear', blurb: 'Scale degrees, chords by ear, note naming.',
     items: () => [EXERCISES.find((x) => x.id === 'degrees'), THEORY_ITEMS['quiz-chordear'], EXERCISES.find((x) => x.id === 'naming')] },
-  { id: 'daily', icon: '📅', title: 'Daily practice', blurb: 'A guided session: warm-up, pitch, sight-singing, rhythm, theory, cool-down.', plan: true },
-  { id: 'warm', icon: '🔥', title: 'Warm-ups', blurb: 'Straw routine, scales and arpeggios through your range, cool-down.', items: () => WARMUPS },
-  { id: 'part', icon: '🎼', title: 'Part-singing', blurb: 'Sing your part of a Bach chorale while the piano plays the others.', chorales: true },
-  { id: 'rhythm', icon: '🥁', title: 'Rhythm', blurb: 'Learn to count, tap rhythms, hear rhythms, vowel on the beat, metronome.', items: () => RHYTHM },
-  { id: 'theory', icon: '📖', title: 'Theory', blurb: 'Keys and key signatures, finding the key, chords.', topics: () => TOPICS },
-  { id: 'early', icon: '🏛️', title: 'Early music', blurb: 'Modes, pure intervals against a drone, old clefs.', items: () => EARLY },
-  { id: 'tools', icon: '🧰', title: 'Tools', blurb: 'Held note, drone, tuning check, record & replay.',
+  { id: 'daily', title: 'Daily practice', short: 'Daily', blurb: 'A guided session: warm-up, pitch, sight-singing, rhythm, theory, cool-down.', plan: true },
+  { id: 'warm', title: 'Warm-ups', blurb: 'Straw routine, scales and arpeggios through your range, cool-down.', items: () => WARMUPS },
+  { id: 'part', title: 'Part-singing', short: 'Chorales', blurb: 'Sing your part of a Bach chorale while the piano plays the others.', chorales: true },
+  { id: 'rhythm', title: 'Rhythm', blurb: 'Learn to count, tap rhythms, hear rhythms, vowel on the beat, metronome.', items: () => RHYTHM },
+  { id: 'theory', title: 'Theory', blurb: 'Keys and key signatures, finding the key, chords.', topics: () => TOPICS },
+  { id: 'early', title: 'Early music', short: 'Early', blurb: 'Modes, pure intervals against a drone, old clefs.', items: () => EARLY },
+  { id: 'tools', title: 'Tools', blurb: 'Held note, drone, tuning check, record & replay.',
     items: () => EXERCISES.filter((x) => x.section === 'tools'),
     extra: [
       { title: 'Drone', blurb: 'A steady home note to tune against while you sing.', open: () => openDroneDetail() },
@@ -732,9 +819,8 @@ const MENU = [
 ];
 const menuSection = (id) => MENU.find((m) => m.id === id);
 
-function menuRow(parent, { icon, title, blurb, tag, onClick }) {
+function menuRow(parent, { title, blurb, tag, onClick }) {
   const r = el('button', 'ex-row menu-row');
-  if (icon) r.appendChild(el('span', 'menu-ico', icon));
   const txt = el('div');
   const t = el('div', 't', title);
   if (tag) t.appendChild(el('span', 'on-tag', tag));
@@ -748,9 +834,9 @@ function openMenu() {
   openSheet('Menu', (body) => {
     const g = el('div', 'group ex-list');
     body.appendChild(g);
-    for (const m of MENU) menuRow(g, { icon: m.icon, title: m.title, blurb: m.blurb, tag: m.id === 'tools' && drone.on ? 'DRONE ON' : null, onClick: () => openSection(m.id) });
-    body.appendChild(el('p', 'muted hub-hint', 'The main screen is always the pitch display and piano. Everything else lives here.'));
-  });
+    for (const m of MENU) menuRow(g, { title: m.title, blurb: m.blurb, tag: m.id === 'tools' && drone.on ? 'DRONE ON' : null, onClick: () => openSection(m.id) });
+    body.appendChild(el('p', 'muted hub-hint', 'Home (top right) goes back to the pitch display and piano.'));
+  }, { close: 'Home' });
 }
 
 function openSection(id) {
@@ -765,9 +851,9 @@ function openSection(id) {
       if (!chorales) { g.appendChild(el('div', 'about', 'Loading…')); loadChorales().then((d) => { chorales = d; if ($('sheetTitle').textContent === m.title) openSection(id); }); }
       else for (const c of chorales) menuRow(g, { title: choraleLabel(c), blurb: choraleBlurb(c), onClick: () => openChoraleDetail(c) });
     }
-    if (m.items) for (const def of m.items()) menuRow(g, { title: def.title, blurb: def.blurb, onClick: () => openItemDetail(def, () => openSection(id)) });
+    if (m.items) for (const def of m.items()) menuRow(g, { title: def.title, blurb: def.blurb, onClick: () => openItemDetail(def, id) });
     for (const x of m.extra || []) menuRow(g, { title: x.title, blurb: x.blurb, tag: x.title === 'Drone' && drone.on ? 'ON' : null, onClick: x.open });
-  }, { back: openMenu });
+  }, { back: openMenu, backLabel: 'Menu', close: 'Home' });
 }
 
 /** One level choice (if the item has levels) and a Start button. */
@@ -783,14 +869,14 @@ function levelPicker(parent, def) {
   parent.appendChild(seg);
 }
 
-function openItemDetail(def, back) {
+function openItemDetail(def, sectionId) {
   openSheet(def.title, (body) => {
     body.appendChild(el('p', 'ex-detail-p', def.why || def.blurb));
     levelPicker(body, def);
     const go = el('button', 'start-ex', 'Start');
-    go.addEventListener('click', () => startPractice(def.id));
+    go.addEventListener('click', () => startPractice(def.id, { from: sectionId }));
     body.appendChild(go);
-  }, { back });
+  }, { back: () => openSection(sectionId), backLabel: menuSection(sectionId).title, close: 'Home' });
 }
 
 let chorales = null;
@@ -809,16 +895,16 @@ function openChoraleDetail(c) {
     const row = el('div', 'row stack'); row.appendChild(seg); g.appendChild(row);
     levelPicker(body, { id: 'partsing', levels: true });
     const go = el('button', 'start-ex', 'Start');
-    go.addEventListener('click', () => startPractice('chorale:' + c.id));
+    go.addEventListener('click', () => startPractice('chorale:' + c.id, { from: 'part' }));
     body.appendChild(go);
-  }, { back: () => openSection('part') });
+  }, { back: () => openSection('part'), backLabel: 'Part-singing', close: 'Home' });
 }
 
 function openTopicDetail(topic, sectionId) {
   openSheet(topic.title, (body) => {
     body.appendChild(el('p', 'ex-detail-p', topic.blurb));
     const learn = el('button', 'start-ex', 'Read the lesson');
-    learn.addEventListener('click', () => startPractice(topic.lesson.id));
+    learn.addEventListener('click', () => startPractice(topic.lesson.id, { from: sectionId }));
     body.appendChild(learn);
     for (const q of topic.quizzes) {
       const g = section(body, 'Quiz: ' + q.title);
@@ -826,11 +912,11 @@ function openTopicDetail(topic, sectionId) {
       box.appendChild(el('div', 'hint', q.blurb));
       levelPicker(box, q);
       const go = el('button', 'chip practice', 'Start quiz');
-      go.addEventListener('click', () => startPractice(q.id));
+      go.addEventListener('click', () => startPractice(q.id, { from: sectionId }));
       box.appendChild(go);
       g.appendChild(box);
     }
-  }, { back: () => openSection(sectionId) });
+  }, { back: () => openSection(sectionId), backLabel: menuSection(sectionId).title, close: 'Home' });
 }
 
 function openDroneDetail() {
@@ -849,7 +935,7 @@ function openDroneDetail() {
     go.addEventListener('click', () => { setDrone(!drone.on); closeSheet(); });
     body.appendChild(go);
     body.appendChild(el('p', 'muted', 'It keeps playing while you use the rest of the app. Tap “Drone ■” on the screen to stop it.'));
-  }, { back: () => openSection('tools') });
+  }, { back: () => openSection('tools'), backLabel: 'Tools', close: 'Home' });
 }
 
 function openKeySheet(back = null) {
@@ -868,7 +954,7 @@ function openKeySheet(back = null) {
     grid('Major', KEYS.filter((k) => k.mode === 'major'));
     grid('Minor', KEYS.filter((k) => k.mode === 'minor'));
     grid('Other', [NO_KEY]);
-  }, { back });
+  }, { back, backLabel: 'Settings' });
 }
 $('keyChip').addEventListener('click', () => openKeySheet());
 
@@ -877,7 +963,7 @@ const SECTIONS = [
   { title: 'Key and staff', items: [
     { type: 'keyrow', label: 'Key' },
     { key: 'clef', type: 'choice', label: 'Clef', options: Object.entries(CLEF_VIEWS).map(([id, v]) => [id, v.label]),
-      hint: 'Tenors usually read the treble clef with a small 8 below (it sounds an octave lower than written).' },
+      hint: 'Tenor: the treble clef with a small 8 below, which sounds an octave lower than written.' },
     { key: 'staffLabels', type: 'seg', label: 'Note names under the staff', options: [['names', 'C4 D4'], ['solfege', 'do re mi'], ['none', 'Off']] },
     { key: 'staffLine', type: 'toggle', label: 'Pitch line beside the note you’re singing' },
   ] },
@@ -888,6 +974,7 @@ const SECTIONS = [
       hint: 'Fast follows quick runs and ornaments; Smooth gives a calmer line and steadier note name.' },
     { key: 'a4', type: 'tuning', label: 'Tuning (A4)', hint: 'Sets the note names, the piano and the drone. 415 for Baroque pitch.' },
     { type: 'calib', label: 'Pitch correction', hint: 'Set by Menu → Tools → Tuning check, if the phone hears pitch slightly off.' },
+    { type: 'status', label: 'Microphone status', hint: 'Live. If the mic is on but singing doesn’t show up, this says why. A screenshot of it helps.' },
   ] },
   { title: 'Display', items: [
     { key: 'levelStyle', type: 'seg', label: 'Octave label under the note',
@@ -1003,14 +1090,18 @@ function buildRow(it) {
       return seg;
     });
     void all;
-  } else if (it.type === 'choice') {
-    const list = el('div', 'choice-list');
-    for (const [v, text] of it.options) {
-      const b = el('button', S[it.key] === v ? 'sel' : '', text);
-      b.addEventListener('click', () => { set(v); for (const x of list.children) x.classList.toggle('sel', x === b); });
-      list.appendChild(b);
-    }
-    row.appendChild(list);
+  } else if (it.type === 'choice') { // a dropdown: iPhone shows its own picker
+    const sel = el('select', 'select');
+    sel.setAttribute('aria-label', it.label);
+    for (const [v, text] of it.options) { const o = el('option', null, text); o.value = v; o.selected = S[it.key] === v; sel.appendChild(o); }
+    sel.addEventListener('change', () => set(sel.value));
+    row.appendChild(sel);
+  } else if (it.type === 'status') {
+    const box = el('div', 'status-box');
+    const update = () => { box.innerHTML = micStatus(); };
+    update();
+    const timer = setInterval(() => { if (!box.isConnected || !$('sheet').classList.contains('open')) clearInterval(timer); else update(); }, 300);
+    row.appendChild(box);
   } else if (it.type === 'range') {
     const r = practiceRange();
     const line = el('div', 'range-row');
@@ -1060,6 +1151,24 @@ function buildRow(it) {
   if (hint) row.appendChild(hint);
   return row;
 }
+/** What the microphone is doing right now, in plain words (Settings → Listening). */
+function micStatus() {
+  const tr = mic && mic.stream.getAudioTracks()[0];
+  const st = tr && tr.getSettings ? tr.getSettings() : {};
+  const bars = Math.round(micLevel * 12);
+  const lines = [];
+  if (starting) lines.push('Mic: starting…');
+  else if (!listening) lines.push('Mic: off. Tap the mic button (top left) to turn it on.');
+  else {
+    lines.push(`Mic: on${paused ? ' (paused)' : ''}${tr ? (tr.readyState !== 'live' ? ' · stopped by the phone' : tr.muted ? ' · paused by the phone' : '') : ''}`);
+    lines.push(`Hearing: <span class="lvl">${'▮'.repeat(bars)}<span>${'▮'.repeat(12 - bars)}</span></span> ${micDb > -119 ? Math.round(micDb) + ' dB' : 'nothing'}`);
+    lines.push(deadSince != null ? 'Getting no sound from the mic.' : micDb < -75 ? 'Very quiet: is something covering the mic?' : shown != null && vt - lastVoiced < 0.5 ? `Hearing a note: ${spelledName(shown)}` : 'Hearing sound, but no clear note.');
+  }
+  lines.push(`Audio: ${ctx.state} · ${ctx.sampleRate} Hz${st.sampleRate ? ` · mic ${st.sampleRate} Hz` : ''} · sensitivity ${Math.round(S.sensitivity * 100)}%${S.calib ? ` · correction ${S.calib}¢` : ''}`);
+  lines.push(problems.length ? 'Recent problems:<br>' + problems.slice().reverse().map((p) => `· ${p.t}: ${p.m.replace(/</g, '&lt;')}${p.n > 1 ? ` (×${p.n})` : ''}`).join('<br>') : 'No problems recorded.');
+  return lines.join('<br>');
+}
+
 /** Rebuild settings (e.g. after the voice changes the range) and scroll back to a section. */
 function openSettingsAt(title) {
   openSettings();
@@ -1109,7 +1218,7 @@ requestAnimationFrame(loop);
 window.__pp = {
   S, graph, staff, keyboard, piano, drone, recorder, tracker, ctx, VERSION,
   get listening() { return listening; }, get shown() { return shown; }, get range() { return range; },
-  get practice() { return practice; }, get playing() { return playing; }, get take() { return recTake; }, get replaying() { return !!replay; },
+  get practice() { return practice; }, get playing() { return playing; }, get mic() { return mic; }, get starting() { return starting; }, get take() { return recTake; }, get replaying() { return !!replay; },
   startMic, stopMic, startPractice, stopPractice, setDrone, toggleRecord, startReplay, stopReplay, openSettings, openMenu, openSection,
   setKey: (id) => { S.key = id; save(); applySettings(); },
   set: (k, v) => { S[k] = v; save(); applySettings(); },

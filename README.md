@@ -4,7 +4,8 @@ A personal singing app for iPhone: sing and see your pitch as a line over time, 
 
 ## Using it
 
-- **Start listening** (red mic button). The first time, iPhone asks to use the microphone: tap Allow.
+- **The mic button** (top left): grey with a slash when off, red when on. The red ring around it grows with what the mic hears, so you can see it's working. The first time, iPhone asks to use the microphone: tap Allow. The mic turns off when you leave the app; tap it again when you come back.
+- **If singing doesn't show up**: Settings → Listening → **Microphone status** shows live what the mic is doing (on/off, input level, audio state) and any recent problems. If iOS stops feeding the mic, the app restarts it once by itself, then says so.
 - **The big readout** shows the note (C4), its octave label (mid2 C, or c′ in Helmholtz style), the frequency and how many cents sharp or flat you are. Vibrato is averaged out of the readout, so a well-centred note with vibrato reads as in tune; the line itself still shows the vibrato.
 - **The graph**: one lane per semitone; your voice is the line, coloured green (within 10 cents), yellow (within 25) or orange. Piano notes you play appear as purple bars so you can sing against them.
 - **Pause** freezes the graph so you can look at what you just sang.
@@ -16,12 +17,12 @@ A personal singing app for iPhone: sing and see your pitch as a line over time, 
 ### Staff view and key
 
 - **Graph | Staff** (under the readout) switches the top of the screen between the pitch graph and a staff. On the staff, every note you hold (and every key you play, in purple) is written down in order, with the note you're singing now at the right and an optional short pitch line beside it.
-- **Clefs** (Settings → Key and staff): tenor (treble with 8 below, the default), treble, bass, grand staff (treble + bass, like piano music), treble + bass with every note shown on both (to learn how the clefs relate), and the tenor C clef for early-music editions.
+- **Clefs** (Settings → Key and staff, a dropdown): tenor (treble with 8 below, the default), treble, bass, grand staff (treble + bass), tenor + bass with every note shown on both (to learn how the clefs relate), and the tenor and alto C clefs for early-music editions.
 - **Key** (the chip next to it): sets the key signature, how notes are spelled (F♯ or G♭), and the key used by practice and the drone.
 
 ### The menu
 
-The main screen is always the pitch display and piano. Everything else is under **☰ Menu**, in sections:
+The main screen (home) is always the pitch display and piano. Everything else is under **Menu**, in sections. Inside the menu, **‹ Menu** goes back to the list of sections and **Home** closes it. In an exercise, **‹ (section)** at the top left goes back to that part of the menu, and **Home** ends the exercise.
 
 - **Daily practice** — a guided 10, 20 or 30 minute session (warm-up → pitch memory → scale & return → sight-singing → rhythm → a quiz → cool-down) with a streak counter.
 - **Warm-ups** — straw routine (Titze), and scales, arpeggios, octave slides and lip-trill patterns that move up your range a semitone at a time with the notes shown ahead; a cool-down.

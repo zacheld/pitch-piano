@@ -120,11 +120,11 @@ export const STAVES = {
 };
 /** Clef choices in Settings. route: which staff each note goes on ('split' = middle C and up on treble). */
 export const CLEF_VIEWS = {
-  tenor: { staves: ['treble8'], label: 'Tenor (treble clef with 8 below)' },
+  tenor: { staves: ['treble8'], label: 'Tenor (treble with 8 below)' },
   treble: { staves: ['treble'], label: 'Treble' },
   bass: { staves: ['bass'], label: 'Bass' },
-  grand: { staves: ['treble', 'bass'], brace: true, route: 'split', label: 'Grand staff (treble + bass, like piano music)' },
-  both: { staves: ['treble8', 'bass'], route: 'both', label: 'Tenor + bass: every note shown on both' },
+  grand: { staves: ['treble', 'bass'], brace: true, route: 'split', label: 'Grand staff (treble + bass)' },
+  both: { staves: ['treble8', 'bass'], route: 'both', label: 'Tenor + bass (every note on both)' },
   tenorC: { staves: ['tenorC'], label: 'Tenor C clef (early music)' },
   alto: { staves: ['alto'], label: 'Alto C clef (early music)' },
 };
