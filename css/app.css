@@ -277,3 +277,5 @@ svg { display: block; }
 .tap-pad { display: block; width: 100%; height: 96px; margin: 0 0 8px; border: 0; border-radius: 18px; background: #23314c; color: #9fd8ff; font-size: 26px; font-weight: 800; letter-spacing: .1em; touch-action: none; }
 .tap-pad[hidden] { display: none; }
 .tap-pad.hit { background: #2f4a72; }
+.ex-next { margin-left: auto; margin-right: 8px; border: 0; border-radius: 999px; padding: 7px 14px; background: var(--accent); color: #002433; font-weight: 700; font-size: 14px; }
+.ex-next[hidden] { display: none; }

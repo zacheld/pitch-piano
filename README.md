@@ -19,16 +19,25 @@ A personal singing app for iPhone: sing and see your pitch as a line over time, 
 - **Clefs** (Settings → Key and staff): tenor (treble with 8 below, the default), treble, bass, grand staff (treble + bass, like piano music), treble + bass with every note shown on both (to learn how the clefs relate), and the tenor C clef for early-music editions.
 - **Key** (the chip next to it): sets the key signature, how notes are spelled (F♯ or G♭), and the key used by practice and the drone.
 
-### Practice (the Practice button)
+### The menu
 
-Four tabs, so nothing is one long list:
+The main screen is always the pitch display and piano. Everything else is under **☰ Menu**, in sections:
 
-- **Singing** — Sight-singing (graded melodies, 5 levels), Intervals, Echo (hear a tune, sing it back), Pitch matching (right away or from memory), Scale & return (up and down the scale: do you land back on do?).
-- **Ear** — Scale degrees (functional ear training: a cadence, a note, which degree?), Note naming (perfect-pitch training that adds notes as you improve).
-- **Theory** — Keys & key signatures, Finding the key, Chords: each a short lesson with examples you can play, then quizzes (name the key from a signature, major or relative minor, chords of the key in Roman numerals, chord qualities by ear).
-- **Tools** — Held note (vibrato speed and width, tuning, drift), Drone (a steady home note to tune against), Record & replay.
+- **Daily practice** — a guided 10, 20 or 30 minute session (warm-up → pitch memory → scale & return → sight-singing → rhythm → a quiz → cool-down) with a streak counter.
+- **Warm-ups** — straw routine (Titze), and scales, arpeggios, octave slides and lip-trill patterns that move up your range a semitone at a time with the notes shown ahead; a cool-down.
+- **Sing** — sight-singing, intervals, echo, pitch memory (with distracting notes in between at medium/hard), scale & return.
+- **Ear training** — scale degrees, chords by ear, note naming.
+- **Part-singing** — sing one voice (tenor by default) of a Bach chorale while the piano plays the other three; your part scrolls in ahead of you and each note is scored.
+- **Rhythm** — learn to count (numbers or Takadimi), tap the rhythm (per-note early/late in ms), hear the rhythm, vowel on the beat (consonant timing), metronome.
+- **Theory** — keys & key signatures, finding the key, chords: lessons and quizzes.
+- **Early music** — modes (lesson and quiz), tuning lab (pure intervals against a drone), old clefs.
+- **Tools** — held note (vibrato), drone, tuning check, record & replay.
 
-Settings → Practice sets your voice type and range (melodies stay inside it) and how close counts as right (judged on the settled, vibrato-averaged pitch).
+Exercises have **Easy / Medium / Hard** and use random keys (Settings → Practice can switch to your chosen key). The question stays on screen; arrows on the staff show higher/lower. Settings → Practice can also hide your pitch until after each note.
+
+### Tuning check
+
+If your singing always reads off by the same amount, Menu → Tools → Tuning check plays notes and listens to itself. If the phone hears its own notes off, it offers a correction (shown and resettable in Settings → Listening). If not, the measuring is right and the offset is in the singing — a common one, since a voice tends to sound higher than a piano at the same pitch.
 
 ### Record and replay
 
@@ -61,6 +70,9 @@ iPhone asks for microphone permission each time the app is opened; Home Screen w
 - `samples/`: 42 piano notes (Steinway B, Versilian Community Sample Library, CC0), ~2.9 MB of AAC.
 - `js/staff.js`, `js/notation.js`, `js/glyphs.js`: staff drawing, music-notation rules, and music symbols from the Bravura font (SIL Open Font License, `licenses/Bravura-OFL.txt`).
 - `js/practice.js`, `js/theory.js`, `js/melody.js`, `js/analysis.js`: exercises, lessons and quizzes, melody generator, held-note analysis.
+- `js/rhythm-core.js`, `js/rhythm-view.js`, `js/rhythm.js`: rhythm generator/scoring, rhythm notation drawing, rhythm exercises.
+- `js/partsing.js`, `data/chorales.json`: part-singing with 24 Bach chorales (`node tools/make-chorales.mjs <dir>` rebuilds them from the music21 corpus).
+- `js/warmup.js`, `js/early.js`: warm-ups and the early-music section.
 - `sw.js`: offline cache. **Change `VERSION` in `sw.js` whenever you publish an update**, or phones keep the old copy.
 - `manifest.webmanifest`, `icons/`: Home Screen name and icon.
 

@@ -17,6 +17,7 @@ function glyph(g, name, x, y, sp, color) { g.save(); g.translate(x, y); g.scale(
  */
 export function drawRhythmView(g, w, h, padTop, padBottom, view) {
   if (view.timing) return drawTiming(g, w, h, padTop, padBottom, view.timing);
+  if (view.meter) return drawMeter(g, w, h, padTop, padBottom, view.meter);
   const rows = view.rows || (view.rhythm ? view.rhythm.bars.map((_, i) => ({ r: view.rhythm, bar: i })) : []);
   if (!rows.length) return;
   const items = view.rows ? view.rows.map((r, i) => ({ r, bar: 0, letter: 'ABC'[i] })) : rows;
@@ -176,4 +177,25 @@ function drawTiming(g, w, h, padTop, padBottom, t) {
     g.fillStyle = C.head; g.font = `800 ${Math.min(64, avail / 4)}px -apple-system, system-ui, sans-serif`; g.textBaseline = 'middle';
     g.fillText(String(t.beat), mid, padTop + avail * 0.2);
   }
+}
+
+/** Tuning lab meter: −50…+50 cents around the piano's (equal-tempered) pitch, with the pure target marked. */
+function drawMeter(g, w, h, padTop, padBottom, m) {
+  const avail = h - padTop - padBottom, cy = padTop + avail / 2;
+  const left = 28, right = w - 28, mid = (left + right) / 2, half = (right - left) / 2;
+  const xOf = (c) => mid + Math.max(-50, Math.min(50, c)) / 50 * half;
+  g.fillStyle = 'rgba(200,210,226,0.2)'; g.fillRect(left, cy - 1, right - left, 2);
+  for (let c = -50; c <= 50; c += 10) { g.fillRect(xOf(c) - 0.5, cy - (c % 50 ? 6 : 10), 1, c % 50 ? 12 : 20); }
+  g.font = '600 12px -apple-system, system-ui, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'top';
+  g.fillStyle = C.label; g.fillText('piano', mid, cy + 30); g.fillRect(mid - 1, cy - 26, 2, 52);
+  g.fillStyle = C.good; g.fillRect(xOf(m.pure) - 2, cy - 34, 4, 68); g.fillText('pure', xOf(m.pure), cy + 42);
+  g.fillStyle = C.label; g.fillText('−50¢', left, cy + 14); g.fillText('+50¢', right, cy + 14);
+  if (m.cents != null) {
+    const near = Math.abs(m.cents - m.pure);
+    g.fillStyle = near <= 5 ? C.good : near <= 15 ? C.near : C.off;
+    g.beginPath(); g.arc(xOf(m.cents), cy, 11, 0, Math.PI * 2); g.fill();
+    g.font = '700 16px -apple-system, system-ui, sans-serif'; g.textBaseline = 'bottom';
+    g.fillText((m.cents > 0 ? '+' : '') + Math.round(m.cents) + '¢', xOf(m.cents), cy - 40);
+  }
+  if (m.label) { g.fillStyle = C.ink; g.font = `700 ${Math.min(22, avail / 10)}px -apple-system, system-ui, sans-serif`; g.textBaseline = 'middle'; g.fillText(m.label, mid, padTop + avail * 0.18); }
 }

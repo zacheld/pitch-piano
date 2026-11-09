@@ -90,6 +90,7 @@ class SightSinging extends Exercise {
   live(note, cents) {
     if (this.done) return;
     const cur = this.notes[this.i];
+    if (this.env.hideLive()) { if (cur.arrow || cur.sung.length) { cur.arrow = null; cur.sung = []; this.show(); } return; }
     const a = Exercise.arrow(note, cents, cur.midi, this.tol);
     const sung = note == null || note === cur.midi ? [] : [{ midi: note, cls: 'off' }];
     if (a !== cur.arrow || JSON.stringify(sung) !== JSON.stringify(cur.sung)) { cur.arrow = a; cur.sung = sung; this.show(); }
@@ -271,7 +272,8 @@ class PitchMatch extends Exercise {
       this.on += dt;
       if (this.on >= 1.0) return this.success(Math.round((note - this.target) * 100 + cents));
     } else this.on = 0;
-    if (a !== this.items[0].arrow) { this.items[0].arrow = a; this.show(); }
+    const shown = this.env.hideLive() ? null : a;
+    if (shown !== this.items[0].arrow) { this.items[0].arrow = shown; this.show(); }
   }
   held(note) { if (this.ready && !this.done && note !== this.target) this.first = false; }
   success(cents) {

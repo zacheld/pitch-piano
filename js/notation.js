@@ -44,7 +44,7 @@ export const signatureLetters = (key) => (key.fifths >= 0 ? SHARP_ORDER.slice(0,
 
 const pcOf = (l, a) => (((LETTER_PC[l] + a) % 12) + 12) % 12;
 export const tonicPc = (key) => pcOf(key.tonic.l, key.tonic.a);
-export const scaleOf = (key) => (key.mode === 'minor' ? MINOR : MAJOR);
+export const scaleOf = (key) => key.scale || (key.mode === 'minor' ? MINOR : MAJOR);
 
 function make(midi, l) {
   let a = ((midi - LETTER_PC[l]) % 12 + 12) % 12;
@@ -68,6 +68,7 @@ export function spell(midi, key, flats = false) {
   const s = (pc - tonicPc(key) + 12) % 12;
   const scale = scaleOf(key);
   let degree = scale.indexOf(s);
+  if (degree < 0 && !CHROMATIC[key.mode]) return spell(midi, KEYS.find((k) => k.mode === 'major' && k.fifths === key.fifths) || KEYS[0], flats); // modes: spell like the parent major
   if (degree < 0) degree = CHROMATIC[key.mode][s][0];
   return make(midi, (key.tonic.l + degree) % 7);
 }
@@ -108,12 +109,14 @@ const SIG = {
   treble: { sharp: [8, 5, 9, 6, 3, 7, 4], flat: [4, 7, 3, 6, 2, 5, 1] },
   bass: { sharp: [6, 3, 7, 4, 1, 5, 2], flat: [2, 5, 1, 4, 0, 3, -1] },
   tenor: { sharp: [2, 6, 3, 7, 4, 8, 5], flat: [5, 8, 4, 7, 3, 6, 2] },
+  alto: { sharp: [7, 4, 8, 5, 2, 6, 3], flat: [3, 6, 2, 5, 1, 4, 0] },
 };
 export const STAVES = {
   treble: { glyph: 'gClef', bottom: 4 * 7 + 2, glyphAt: 2, sig: SIG.treble, label: 'Treble' },
   treble8: { glyph: 'gClef8vb', bottom: 3 * 7 + 2, glyphAt: 2, sig: SIG.treble, label: 'Tenor (treble 8)' },
   bass: { glyph: 'fClef', bottom: 2 * 7 + 4, glyphAt: 6, sig: SIG.bass, label: 'Bass' },
   tenorC: { glyph: 'cClef', bottom: 3 * 7 + 1, glyphAt: 6, sig: SIG.tenor, label: 'Tenor C clef' },
+  alto: { glyph: 'cClef', bottom: 3 * 7 + 3, glyphAt: 4, sig: SIG.alto, label: 'Alto C clef' },
 };
 /** Clef choices in Settings. route: which staff each note goes on ('split' = middle C and up on treble). */
 export const CLEF_VIEWS = {
@@ -123,6 +126,7 @@ export const CLEF_VIEWS = {
   grand: { staves: ['treble', 'bass'], brace: true, route: 'split', label: 'Grand staff (treble + bass, like piano music)' },
   both: { staves: ['treble8', 'bass'], route: 'both', label: 'Tenor + bass: every note shown on both' },
   tenorC: { staves: ['tenorC'], label: 'Tenor C clef (early music)' },
+  alto: { staves: ['alto'], label: 'Alto C clef (early music)' },
 };
 
 /** Position of a spelled note on a staff. */

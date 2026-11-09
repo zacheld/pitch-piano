@@ -110,12 +110,12 @@ const LESSONS = {
   },
 };
 
-class Lesson extends Exercise {
+export class Lesson extends Exercise {
   get needsMic() { return false; }
-  start() { this.cards = LESSONS[this.opts.lesson](this.env); this.i = 0; this.show(); }
+  start() { this.cards = (this.opts.cards || LESSONS[this.opts.lesson])(this.env); this.i = 0; this.show(); }
   show() {
     const c = this.cards[this.i], n = this.cards.length;
-    this.env.staff.setExercise({ key: c.key === undefined ? null : c.key, items: c.items || [] });
+    this.env.staff.setExercise({ key: c.key === undefined ? null : c.key, items: c.items || [], view: c.view });
     this.ui.score(`${this.i + 1}/${n}`);
     this.ui.prompt(c.text);
     const b = [];

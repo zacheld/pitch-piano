@@ -82,10 +82,12 @@ export class StaffView {
   /** items: [{ midi, state, label, sung: [{ midi, cls }] }]; state: pending|current|good|near|off|hidden|given|piano */
   setExercise(ex) { this.exercise = ex; this.dirty = true; }
   get k() { return this.exercise && this.exercise.key !== undefined ? this.exercise.key : this.key; }
+  /** The clef view in use: a lesson card can ask for its own (e.g. the tenor C clef). */
+  get v() { return (this.exercise && this.exercise.view) || this.view; }
 
   // ---------- layout ----------
   layout() {
-    const v = CLEF_VIEWS[this.view] || CLEF_VIEWS.tenor;
+    const v = CLEF_VIEWS[this.v] || CLEF_VIEWS.tenor;
     const n = v.staves.length;
     const avail = this.h - this.padTop - this.padBottom;
     const both = v.route === 'both';
@@ -119,7 +121,7 @@ export class StaffView {
     g.fillStyle = '#0d1016';
     g.fillRect(0, 0, w, h);
     const ex = this.exercise;
-    if (ex && (ex.rhythm || ex.rows || ex.timing)) { drawRhythmView(g, w, h, this.padTop, this.padBottom, ex); return; }
+    if (ex && (ex.rhythm || ex.rows || ex.timing || ex.meter)) { drawRhythmView(g, w, h, this.padTop, this.padBottom, ex); return; }
     const L = this.layout();
     this.drawStaves(L);
     if (this.exercise) this.drawExercise(L);
@@ -160,7 +162,7 @@ export class StaffView {
   /** One note at x on every staff it belongs to (two in the "both" view), with ledgers and accidental. */
   note(L, x, midi, color, { hollow = false, label = null, accidentals = true } = {}) {
     const n = spell(midi, this.k, this.flats);
-    const idxs = stavesFor(this.view, midi);
+    const idxs = stavesFor(this.v, midi);
     const ys = [];
     for (const i of idxs) {
       const st = L.staves[i];

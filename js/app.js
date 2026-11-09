@@ -14,10 +14,12 @@ import { EXERCISES, exerciseById, LEVEL_NAMES } from './practice.js';
 import { TOPICS, THEORY_ITEMS } from './theory.js';
 import { RHYTHM } from './rhythm.js';
 import { loadChorales, PartSinging, PARTS, choraleLabel, choraleBlurb } from './partsing.js';
+import { WARMUPS } from './warmup.js';
+import { EARLY } from './early.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -35,7 +37,7 @@ const DEFAULTS = {
   echo: false, callAudio: true,
   view: 'graph', key: 'C', clef: 'tenor', staffLabels: 'names', staffLine: true,
   voice: 'tenor', rangeLow: null, rangeHigh: null, strict: 'normal', droneFifth: true, ex: {}, levels: {}, practiceKey: 'random', calib: 0,
-  counting: 'numbers', tapOffset: 0, micLatency: null,
+  counting: 'numbers', tapOffset: 0, micLatency: null, hideLive: false, planLength: 20,
 };
 
 // ---------- storage (wrapped: private mode or cleared storage must never break the app) ----------
@@ -221,7 +223,7 @@ document.addEventListener('visibilitychange', () => {
 // ---------- readout ----------
 function renderReadout(voiced) {
   $('readout').classList.toggle('idle', !voiced);
-  if (shown === null) {
+  if (shown === null || (practice && S.hideLive)) {
     setText($('rNote'), '–'); setText($('rLevel'), ''); setText($('rHz'), ''); setText($('rCents'), '');
     return;
   }
@@ -360,7 +362,7 @@ function loop(ts) {
   if (replay) stepReplay();
   if (recorder.recording && Math.floor(ts / 250) !== Math.floor((ts - dt * 1000) / 250)) setText($('recTime'), fmtTime(recorder.seconds));
 
-  const live = (listening || replay) && !paused && vt - lastVoiced < 0.3 ? shown : null;
+  const live = (listening || replay) && !paused && vt - lastVoiced < 0.3 && !(practice && S.hideLive) ? shown : null;
   if (!paused) {
     graph.current = live;
     graph.follow(live, dt);
@@ -542,6 +544,16 @@ const env = {
   },
   noteAt: (m, t, dur, gain = 1) => piano.playAt(m, t, dur, gain),
   stopScheduled: () => piano.stopScheduled(),
+  hideLive: () => !!S.hideLive,
+  droneOn: (m, fifth) => { drone.start(m, { fifth, a4: S.a4 }); render(); },
+  droneOff: () => { drone.stop(); render(); },
+  freqOf: (m) => midiToFreq(m, S.a4),
+  toneHz: (hz, seconds) => {
+    const o = ctx.createOscillator(), a = ctx.createGain(), t = ctx.currentTime;
+    o.frequency.value = hz;
+    a.gain.setValueAtTime(0, t); a.gain.linearRampToValueAtTime(0.3, t + 0.05); a.gain.setValueAtTime(0.3, t + seconds - 0.1); a.gain.linearRampToValueAtTime(0, t + seconds);
+    o.connect(a).connect(piano.out); o.start(t); o.stop(t + seconds + 0.05);
+  },
   graph,
   vtOf: (audioT) => vt + (audioT - ctx.currentTime),
   pad: (show) => { $('tapPad').hidden = !show; layoutExercise(); },
@@ -561,14 +573,16 @@ $('tapPad').addEventListener('pointerdown', (e) => {
   $('tapPad').classList.add('hit'); setTimeout(() => $('tapPad').classList.remove('hit'), 90);
 });
 
-function startPractice(id) {
-  let def = exerciseById(id) || THEORY_ITEMS[id] || RHYTHM.find((x) => x.id === id);
+function startPractice(id, { keepPlan = false } = {}) {
+  let def = exerciseById(id) || THEORY_ITEMS[id] || RHYTHM.find((x) => x.id === id) || WARMUPS.find((x) => x.id === id) || EARLY.find((x) => x.id === id);
   if (!def && id.startsWith('chorale:')) {
     const c = (chorales || []).find((x) => x.id === id.slice(8));
     if (c) def = { id: 'partsing', title: 'Part-singing', make: (e, o) => new PartSinging(e, { ...o, chorale: c, part: S.part || partFor() }) };
   }
   if (!def) return;
+  const keep = plan;
   stopPractice(); stopReplay();
+  if (keepPlan) plan = keep;
   closeSheet();
   const opts = { level: (S.levels || {})[def.id || id] || def.defaultLevel || 'medium' };
   practiceDef = def;
@@ -583,6 +597,7 @@ function startPractice(id) {
   render();
 }
 function stopPractice() {
+  plan = null; $('exNext').hidden = true;
   if (!practice) return;
   practice.stop(); stopSeq(); piano.stopScheduled();
   graph.script = []; graph.lookahead = 0; graph.keyOverride = null;
@@ -597,6 +612,82 @@ function stopPractice() {
 }
 $('exClose').addEventListener('click', stopPractice);
 $('practiceBtn').addEventListener('click', () => openMenu());
+
+// ---------- daily practice plan ----------
+const PLAN_QUIZZES = ['quiz-keysig', 'hearrhythm', 'quiz-roman', 'quiz-majmin', 'degrees'];
+const today = () => new Date().toISOString().slice(0, 10);
+function planSteps(len) {
+  const k = len / 20, day = Math.floor(Date.now() / 86400000);
+  return [
+    { id: day % 2 ? 'wu-straw' : 'wu-five', min: 3 * k }, { id: 'match', min: 3 * k }, { id: 'scale', min: 2 * k },
+    { id: 'sight', min: 5 * k }, { id: 'tap', min: 3 * k }, { id: PLAN_QUIZZES[day % PLAN_QUIZZES.length], min: 2 * k }, { id: 'wu-cool', min: 2 * k },
+  ];
+}
+const defOf = (id) => exerciseById(id) || THEORY_ITEMS[id] || RHYTHM.find((x) => x.id === id) || WARMUPS.find((x) => x.id === id) || EARLY.find((x) => x.id === id);
+function streak() {
+  const days = new Set(store.get('plan.days', []));
+  let n = 0;
+  for (let d = new Date(); days.has(d.toISOString().slice(0, 10)); d.setDate(d.getDate() - 1)) n++;
+  return { n, total: days.size };
+}
+function buildPlanPage(body, g) {
+  g.remove();
+  body.appendChild(el('p', 'ex-detail-p', 'A short guided session in the order voice teachers recommend: general to specific, with a cool-down. Each step suggests a time; tap Next › when you’re ready to move on.'));
+  const lenG = section(body, 'Session length');
+  const row = el('div', 'row stack');
+  const seg = el('div', 'seg');
+  const list = el('div', 'group');
+  const showSteps = () => {
+    list.textContent = '';
+    for (const st of planSteps(S.planLength)) {
+      const r = el('div', 'row');
+      r.append(el('div', 'label', defOf(st.id).title), el('span', 'muted', `${Math.round(st.min)} min`));
+      list.appendChild(r);
+    }
+  };
+  for (const [v, t] of [[10, '10 min'], [20, '20 min'], [30, '30 min']]) {
+    const b = el('button', S.planLength === v ? 'sel' : '', t);
+    b.addEventListener('click', () => { S.planLength = v; save(); for (const x of seg.children) x.classList.toggle('sel', x === b); showSteps(); });
+    seg.appendChild(b);
+  }
+  row.appendChild(seg); lenG.appendChild(row);
+  body.appendChild(el('div', 'section-title', 'Today'));
+  body.appendChild(list);
+  showSteps();
+  const s = streak();
+  body.appendChild(el('p', 'muted hub-hint', s.total ? `Streak: ${s.n} day${s.n === 1 ? '' : 's'} · ${s.total} day${s.total === 1 ? '' : 's'} practised in all.` : 'Your streak starts with your first session.'));
+  const go = el('button', 'start-ex', 'Start today’s session');
+  go.addEventListener('click', startPlan);
+  body.appendChild(go);
+}
+let plan = null;
+function startPlan() { plan = { steps: planSteps(S.planLength), i: 0 }; runPlanStep(); }
+function runPlanStep() {
+  const st = plan.steps[plan.i];
+  startPractice(st.id, { keepPlan: true });
+  plan.end = Date.now() + st.min * 60000;
+  $('exNext').hidden = false;
+  $('exNext').textContent = plan.i < plan.steps.length - 1 ? 'Next ›' : 'Finish';
+  planTick();
+}
+function planTick() {
+  if (!plan || !practiceDef) return;
+  const left = Math.max(0, Math.round((plan.end - Date.now()) / 1000));
+  setText($('exTitle'), `${practiceDef.title} · ${plan.i + 1}/${plan.steps.length} · ${left ? fmtTime(left) : 'time!'}`);
+}
+setInterval(planTick, 1000);
+$('exNext').addEventListener('click', () => {
+  if (!plan) return;
+  plan.i++;
+  if (plan.i < plan.steps.length) return runPlanStep();
+  const days = new Set(store.get('plan.days', [])); days.add(today()); store.set('plan.days', [...days]);
+  plan = null; stopPractice();
+  const s = streak();
+  openSheet('Session complete', (body) => {
+    body.appendChild(el('p', 'ex-detail-p', `Nice work. That’s ${s.n} day${s.n === 1 ? '' : 's'} in a row (${s.total} in all). Short, regular sessions beat long, occasional ones.`));
+    const b = el('button', 'start-ex', 'Done'); b.addEventListener('click', closeSheet); body.appendChild(b);
+  });
+});
 
 // ---------- sheets (settings, practice, key) ----------
 function openSheet(title, build, { back = null } = {}) {
@@ -626,9 +717,12 @@ const MENU = [
     items: () => EXERCISES.filter((x) => x.section === 'sing') },
   { id: 'ear', icon: '👂', title: 'Ear training', blurb: 'Scale degrees, chords by ear, note naming.',
     items: () => [EXERCISES.find((x) => x.id === 'degrees'), THEORY_ITEMS['quiz-chordear'], EXERCISES.find((x) => x.id === 'naming')] },
+  { id: 'daily', icon: '📅', title: 'Daily practice', blurb: 'A guided session: warm-up, pitch, sight-singing, rhythm, theory, cool-down.', plan: true },
+  { id: 'warm', icon: '🔥', title: 'Warm-ups', blurb: 'Straw routine, scales and arpeggios through your range, cool-down.', items: () => WARMUPS },
   { id: 'part', icon: '🎼', title: 'Part-singing', blurb: 'Sing your part of a Bach chorale while the piano plays the others.', chorales: true },
   { id: 'rhythm', icon: '🥁', title: 'Rhythm', blurb: 'Learn to count, tap rhythms, hear rhythms, vowel on the beat, metronome.', items: () => RHYTHM },
   { id: 'theory', icon: '📖', title: 'Theory', blurb: 'Keys and key signatures, finding the key, chords.', topics: () => TOPICS },
+  { id: 'early', icon: '🏛️', title: 'Early music', blurb: 'Modes, pure intervals against a drone, old clefs.', items: () => EARLY },
   { id: 'tools', icon: '🧰', title: 'Tools', blurb: 'Held note, drone, tuning check, record & replay.',
     items: () => EXERCISES.filter((x) => x.section === 'tools'),
     extra: [
@@ -665,6 +759,7 @@ function openSection(id) {
     const g = el('div', 'group ex-list');
     body.appendChild(g);
     if (m.topics) for (const topic of m.topics()) menuRow(g, { title: topic.title, blurb: topic.blurb, onClick: () => openTopicDetail(topic, id) });
+    if (m.plan) { buildPlanPage(body, g); return; }
     if (m.chorales) {
       body.insertBefore(el('p', 'ex-detail-p', 'Pick a chorale. You’ll see your part coming in from the right, hear the other three voices on the piano, and each note turns green or orange as you sing it. Headphones help.'), g);
       if (!chorales) { g.appendChild(el('div', 'about', 'Loading…')); loadChorales().then((d) => { chorales = d; if ($('sheetTitle').textContent === m.title) openSection(id); }); }
@@ -811,6 +906,8 @@ const SECTIONS = [
       hint: 'Random: a new key each time. My key: the key chosen on the main screen.' },
     { key: 'counting', type: 'seg', label: 'Counting syllables', options: [['numbers', '1 e & a'], ['takadimi', 'ta ka di mi']],
       hint: 'Shown under rhythms. Numbers are the most common; Takadimi names each part of the beat the same way in any meter.' },
+    { key: 'hideLive', type: 'seg', label: 'Show my pitch while I sing (exercises)', options: [[false, 'Live'], [true, 'After each note']],
+      hint: 'Research suggests seeing feedback only afterwards builds your own ear better than watching it live.' },
     { key: 'strict', type: 'seg', label: 'How close counts as right', options: [['relaxed', '±50¢'], ['normal', '±35¢'], ['strict', '±20¢']],
       hint: 'Measured on the vibrato-averaged pitch, so normal vibrato is fine.' },
   ] },
