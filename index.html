@@ -27,9 +27,9 @@
       <div class="sub"><span id="rLevel" class="level"></span><span id="rHz"></span><span id="rCents" class="cents"></span></div>
     </div>
     <div class="top-right">
-      <button id="pauseBtn" class="round" aria-label="Pause" disabled>
-        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5h3.5v14H7zm6.5 0H17v14h-3.5z"/></svg>
-        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+      <button id="recBtn" class="round rec" aria-label="Record">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle class="i-rec" cx="12" cy="12" r="6.5" fill="currentColor"/><rect class="i-stop" x="7" y="7" width="10" height="10" rx="2" fill="currentColor"/></svg>
+        <span id="recTime" class="rec-time"></span>
       </button>
       <button id="setBtn" class="round" aria-label="Settings">
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="16" cy="7" r="2.6"/><circle cx="10" cy="17" r="2.6"/></svg>
@@ -37,11 +37,27 @@
     </div>
   </header>
   <div class="subbar">
-    <button id="rangeChip" class="chip">Range –</button>
-    <button id="tuneChip" class="chip">A4 = 440 Hz</button>
+    <div class="seg view-seg" role="tablist" aria-label="Display">
+      <button id="viewGraph" role="tab">Graph</button><button id="viewStaff" role="tab">Staff</button>
+    </div>
+    <button id="keyChip" class="chip">C major</button>
+    <button id="practiceBtn" class="chip practice">Practice</button>
   </div>
   <main id="graphWrap" class="graph-wrap">
     <canvas id="graph"></canvas>
+    <canvas id="staff" hidden></canvas>
+    <div class="stage-tl"><button id="rangeChip" class="chip small">Range –</button></div>
+    <div class="stage-tr">
+      <button id="droneChip" class="chip small drone" hidden>Drone ■</button>
+      <button id="pauseBtn" class="mini-round" aria-label="Pause" disabled>
+        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 5h3.5v14H7zm6.5 0H17v14h-3.5z"/></svg>
+        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>
+      </button>
+    </div>
+    <div id="replayBar" class="replay-bar" hidden>
+      <button id="replayBtn" class="chip small replay">▶ Replay</button>
+      <div class="replay-track"><div id="replayFill"></div></div>
+    </div>
     <div id="graphMsg" class="graph-msg">
       <button id="startBtn" class="start">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
@@ -50,6 +66,15 @@
       <p id="msgText">Sing, and your pitch draws here.</p>
     </div>
     <div id="pausedTag" class="tag">Paused</div>
+    <div id="exBar" class="ex-bar" hidden>
+      <div class="ex-title"><span id="exTitle"></span><span id="exScore" class="ex-score"></span></div>
+      <button id="exClose" class="ex-close" aria-label="End practice">✕</button>
+    </div>
+    <div id="exPanel" class="ex-panel" hidden>
+      <div id="exPrompt" class="ex-prompt"></div>
+      <div id="exAnswers" class="ex-answers"></div>
+      <div id="exButtons" class="ex-buttons"></div>
+    </div>
   </main>
   <section class="piano">
     <div class="piano-bar">
@@ -70,9 +95,13 @@
 
 <div id="sheet" class="sheet" aria-hidden="true">
   <div class="scrim" id="scrim"></div>
-  <div class="panel" role="dialog" aria-label="Settings">
-    <div class="head"><h2>Settings</h2><button id="doneBtn" class="done">Done</button></div>
-    <div class="body scroll" id="settingsBody"></div>
+  <div class="panel" role="dialog" aria-labelledby="sheetTitle">
+    <div class="head">
+      <button id="sheetBack" class="back" hidden>‹ Back</button>
+      <h2 id="sheetTitle">Settings</h2>
+      <button id="doneBtn" class="done">Done</button>
+    </div>
+    <div class="body scroll" id="sheetBody"></div>
   </div>
 </div>
 

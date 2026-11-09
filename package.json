@@ -10,6 +10,7 @@
   },
   "license": "UNLICENSED",
   "devDependencies": {
+    "opentype.js": "^2.0.0",
     "playwright-core": "^1.49.1"
   }
 }

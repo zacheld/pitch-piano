@@ -110,7 +110,7 @@ export class Graph {
       const black = isBlack(n), isC = n % 12 === 0;
       g.font = `${isC || n === this.current ? 700 : 500} ${fs}px -apple-system, system-ui, sans-serif`;
       g.fillStyle = n === this.current ? '#e6f6ff' : isC ? '#c9d2e3' : black ? '#566074' : '#8c97ab';
-      g.fillText(sciName(n, this.flats), gutter - 7, y);
+      g.fillText(this.nameOf ? this.nameOf(n) : sciName(n, this.flats), gutter - 7, y);
     }
 
     g.save();

@@ -2,6 +2,43 @@
 // Retunes with the A4 setting, so the piano matches Baroque (415) or any other reference pitch.
 
 const MAX_VOICES = 32;
+/** Extra gain while the mic is on (iPhone plays everything quieter then). ×3.2 ≈ +10 dB. */
+export const LOUD_BOOST = 3.2;
+
+/** Linear up to 0.8, then rounds off smoothly towards 1.0, so the loudest peaks never hard-clip. */
+function softClipCurve() {
+  const n = 2048, c = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1, a = Math.abs(x);
+    c[i] = a <= 0.8 ? x : Math.sign(x) * (0.8 + 0.2 * Math.tanh((a - 0.8) / 0.2));
+  }
+  return c;
+}
+
+/** Output stage: volume -> boost -> compressor/limiter -> soft clip. Exported so tests can measure it offline. */
+export function buildOutputChain(ctx) {
+  const input = ctx.createGain();
+  const boost = ctx.createGain();
+  const comp = ctx.createDynamicsCompressor(); // keeps big sustained chords from clipping
+  const clip = ctx.createWaveShaper();
+  clip.curve = softClipCurve();
+  input.connect(boost).connect(comp).connect(clip);
+  const chain = {
+    input, boost, comp, output: clip,
+    setLoud(loud) {
+      const t = ctx.currentTime;
+      boost.gain.setValueAtTime(loud ? LOUD_BOOST : 1, t);
+      // loud: act as a limiter, so the extra level never turns into distortion on chords
+      comp.threshold.setValueAtTime(loud ? -6 : -12, t);
+      comp.knee.setValueAtTime(loud ? 3 : 8, t);
+      comp.ratio.setValueAtTime(loud ? 20 : 4, t);
+      comp.attack.setValueAtTime(loud ? 0.002 : 0.003, t);
+      comp.release.setValueAtTime(loud ? 0.15 : 0.25, t);
+    },
+  };
+  chain.setLoud(false);
+  return chain;
+}
 
 export class PianoAudio {
   constructor() {
@@ -17,14 +54,11 @@ export class PianoAudio {
   /** Call once with the shared AudioContext. Starts loading the samples. */
   attach(ctx) {
     this.ctx = ctx;
-    this.out = ctx.createGain();
+    this.chain = buildOutputChain(ctx);
+    this.out = this.chain.input;          // everything audible (piano, drone, replays) goes in here
     this.out.gain.value = this.volume;
-    const comp = ctx.createDynamicsCompressor(); // keeps big sustained chords from clipping
-    comp.threshold.value = -12; comp.knee.value = 8; comp.ratio.value = 4;
-    comp.attack.value = 0.003; comp.release.value = 0.25;
-    this.out.connect(comp);
-    comp.connect(ctx.destination);
-    this.comp = comp;
+    this.comp = this.chain.output;
+    this.comp.connect(ctx.destination);
     this.route = 'direct';
     return this.load();
   }
@@ -51,6 +85,7 @@ export class PianoAudio {
     }
     const want = on ? 'stream' : 'direct';
     if (want === 'stream') { const p = this.el.play(); if (p && p.catch) p.catch(() => {}); }
+    this.chain.setLoud(want === 'stream');
     if (want === this.route) return;
     try { this.comp.disconnect(); } catch (e) { /* not connected */ }
     if (want === 'stream') this.comp.connect(this.streamDest);

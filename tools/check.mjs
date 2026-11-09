@@ -20,8 +20,8 @@ const problems = [];
 const ok = (cond, msg) => { console.log((cond ? '  ok   ' : '  FAIL ') + msg); if (!cond) problems.push(msg); };
 
 // ---------- the test singer ----------
-function testVoice(file) {
-  const sr = 48000, notes = [60, 62, 64, 65, 67], dur = 0.9, gap = 0.12;
+function testVoice(file, notes = [60, 62, 64, 65, 67]) {
+  const sr = 48000, dur = 0.9, gap = 0.12;
   const n = Math.round(sr * notes.length * (dur + gap) + sr * 0.5);
   const x = new Float32Array(n);
   let i = Math.round(sr * 0.3);
@@ -93,9 +93,9 @@ try {
   await page.locator('#setBtn').tap();
   await page.waitForTimeout(450);
   await page.screenshot({ path: path.join(out, 'phone-settings.png') });
-  const sc = await page.evaluate(() => { const b = document.getElementById('settingsBody'); b.scrollTop = 400; return [b.scrollTop, b.scrollHeight, b.clientHeight]; });
+  const sc = await page.evaluate(() => { const b = document.getElementById('sheetBody'); b.scrollTop = 400; return [b.scrollTop, b.scrollHeight, b.clientHeight]; });
   ok(sc[0] > 0 && sc[1] > sc[2], `settings list scrolls inside its sheet (${sc[1]} px of content in ${sc[2]} px)`);
-  await page.evaluate(() => { document.getElementById('settingsBody').scrollTop = 0; });
+  await page.evaluate(() => { document.getElementById('sheetBody').scrollTop = 0; });
   await page.locator('.presets button', { hasText: '415' }).tap();
   const a4 = await page.evaluate(() => [window.__pp.S.a4, window.__pp.piano.a4, window.__pp.tracker.a4]);
   ok(a4.every((v) => v === 415), `A4 = 415 retunes note names and piano (${a4.join(', ')})`);
@@ -202,6 +202,52 @@ try {
   await ctxC.setOffline(false);
   ok(errs2.length === 0, 'no errors in Chrome' + (errs2.length ? ': ' + errs2.join(' | ') : ''));
   await ch.close();
+
+  // ---------- 3. Practice with a fake singer, recording, drone, louder piano ----------
+  console.log('Chrome: sight-singing with a fake singer, record & replay, drone');
+  const { generateMelody, makeRng } = await import('../js/melody.js');
+  const { keyById } = await import('../js/notation.js');
+  const SEED = 5;
+  const melody = generateMelody({ key: keyById('C'), level: 1, length: 6, low: 50, high: 69, rng: makeRng(SEED) }).notes.map((n) => n.midi);
+  const melWav = path.join(out, 'test-melody.wav');
+  testVoice(melWav, melody);
+  const ch3 = await chromium.launch({ executablePath: CHROME, headless: true, args: [
+    '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${melWav}`,
+    '--autoplay-policy=no-user-gesture-required'] });
+  const p3 = await (await ch3.newContext({ viewport: { width: 393, height: 852 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true })).newPage();
+  const errs3 = [];
+  p3.on('pageerror', (e) => errs3.push(e.message));
+  await p3.goto(APP + '?seed=' + SEED);
+  await p3.waitForFunction(() => window.__pp && window.__pp.piano.ready, null, { timeout: 30000 });
+  await p3.evaluate(() => window.__pp.set('key', 'C'));
+  await p3.evaluate(() => window.__pp.startPractice('sight'));
+  const shown3 = await p3.evaluate(() => window.__pp.practice.notes.map((n) => n.midi));
+  ok(JSON.stringify(shown3) === JSON.stringify(melody), `the app shows the expected melody (${shown3.join(' ')})`);
+  const done = await p3.waitForFunction(() => window.__pp.practice && window.__pp.practice.done, null, { timeout: 40000 }).then(() => true, () => false);
+  const res3 = await p3.evaluate(() => ({ states: window.__pp.practice.notes.map((n) => n.state), prompt: document.getElementById('exPrompt').textContent }));
+  ok(done && res3.states.every((s) => s === 'good' || s === 'near'), `sight-singing: every note recognised as sung (${res3.states.join(' ')})`);
+  await p3.screenshot({ path: path.join(out, 'practice-sight-done.png') });
+  await p3.evaluate(() => window.__pp.stopPractice());
+  const boost = await p3.evaluate(() => window.__pp.piano.chain.boost.gain.value);
+  ok(Math.abs(boost - 3.2) < 0.01, `louder piano while listening (boost ×${boost})`);
+  await p3.evaluate(() => window.__pp.toggleRecord());
+  await p3.waitForTimeout(3200);
+  await p3.evaluate(() => window.__pp.toggleRecord());
+  await p3.waitForFunction(() => window.__pp.take, null, { timeout: 5000 });
+  const take = await p3.evaluate(() => ({ s: window.__pp.take.seconds, frames: window.__pp.take.frames.length }));
+  ok(take.s > 2.5 && take.s < 4.5 && take.frames > 120, `recorded ${take.s.toFixed(1)} s with ${take.frames} pitch frames`);
+  await p3.evaluate(() => window.__pp.startReplay());
+  await p3.waitForTimeout(1500);
+  const rp = await p3.evaluate(() => ({ on: window.__pp.replaying, pts: window.__pp.graph.points.filter((x) => x.m !== null).length }));
+  ok(rp.on && rp.pts > 20, `replay redraws the pitch line in step (${rp.pts} points after 1.5 s)`);
+  await p3.waitForFunction(() => !window.__pp.replaying, null, { timeout: 8000 }).catch(() => {});
+  ok(!(await p3.evaluate(() => window.__pp.replaying)), 'replay finishes by itself');
+  await p3.evaluate(() => window.__pp.setDrone(true));
+  const dr = await p3.evaluate(() => ({ on: window.__pp.drone.on, midi: window.__pp.drone.midi, chip: document.getElementById('droneChip').textContent }));
+  ok(dr.on && dr.midi === 48, `drone on the home note an octave below the tenor's melodies (${dr.chip})`);
+  await p3.evaluate(() => window.__pp.setDrone(false));
+  ok(errs3.length === 0, 'no errors in practice run' + (errs3.length ? ': ' + errs3.join(' | ') : ''));
+  await ch3.close();
 } finally {
   if (server) server.kill();
 }
