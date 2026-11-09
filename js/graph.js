@@ -11,6 +11,8 @@ export class Graph {
     this.c = canvas; this.g = canvas.getContext('2d');
     this.points = [];     // { t, m, c }  m = line pitch, c = vibrato-averaged pitch (null = silence)
     this.targets = [];    // { midi, t0, t1 }
+    this.script = [];     // notes to sing, known ahead of time (part-singing): { midi, t0, t1, state }
+    this.lookahead = 0;   // seconds of the future shown to the right of "now"
     this.view = 60;       // MIDI note at the vertical centre
     this.goal = null;
     this.span = 18; this.window = 7; this.flats = false; this.colorize = true; this.showTargets = true;
@@ -44,10 +46,15 @@ export class Graph {
   clearTrace() { this.points.length = 0; this.dirty = true; }
 
   /** Semitones shown: the chosen graph height, reduced on short screens so lanes stay at least 13 px. */
-  get visibleSpan() { return Math.max(7, Math.min(this.span, Math.floor(this.h / 13) || this.span)); }
+  get visibleSpan() { const uh = this.h - (this.padTop || 0) - (this.padBottom || 0); return Math.max(7, Math.min(this.span, Math.floor(uh / 13) || this.span)); }
 
   /** Ease the view so `m` stays comfortably inside, without chasing every wobble. */
   follow(m, dt) {
+    if (this.script.length && this.lastNow != null) { // part-singing: follow the music, not the voice
+      const ahead = this.lastNow + 0.8;
+      const n = this.script.find((x) => x.t1 > ahead) || this.script[this.script.length - 1];
+      m = n.midi;
+    }
     const span = this.visibleSpan, half = span / 2;
     if (m != null && Math.abs(m - this.view) > span * 0.32) this.goal = m;
     if (this.goal != null) {
@@ -61,6 +68,7 @@ export class Graph {
 
   /** Anything moving on screen? (lets the app skip redraws when idle) */
   active(now) {
+    if (this.script.length) return true;
     if (this.dirty || this.goal != null) return true;
     const last = this.points[this.points.length - 1];
     if (last && now - last.t < this.window) return true;
@@ -73,12 +81,15 @@ export class Graph {
     this.dirty = false;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const span = this.visibleSpan;
-    const lane = h / span;
+    const pt = this.padTop || 0, pb = this.padBottom || 0, uh = Math.max(40, h - pt - pb);
+    const lane = uh / span;
     const gutter = 44, right = 14;
     const plotW = w - gutter - right;
     const pps = plotW / this.window;
-    const yOf = (m) => h / 2 - (m - this.view) * lane;
-    const xOf = (t) => w - right - (now - t) * pps;
+    const yOf = (m) => pt + uh / 2 - (m - this.view) * lane;
+    this.lastNow = now;
+    const nowX = w - right - this.lookahead * pps;
+    const xOf = (t) => nowX - (now - t) * pps;
 
     g.fillStyle = '#0d1016';
     g.fillRect(0, 0, w, h);
@@ -116,6 +127,15 @@ export class Graph {
     g.save();
     g.beginPath(); g.rect(gutter, 0, w - gutter, h); g.clip();
 
+    // the part to sing (part-singing), coming in from the right
+    for (const x of this.script) {
+      if (x.t1 < now - this.window || x.t0 > now + this.lookahead + 0.5) continue;
+      const x0 = Math.max(gutter, xOf(x.t0)), x1 = Math.min(w, xOf(x.t1));
+      const col = x.state === 'good' ? '48,209,88' : x.state === 'off' ? '255,138,76' : x.state === 'current' ? '100,210,255' : '191,140,255';
+      g.fillStyle = `rgba(${col},0.28)`; g.strokeStyle = `rgba(${col},0.9)`; g.lineWidth = 1.2;
+      roundRect(g, x0, yOf(x.midi) - lane * 0.42, Math.max(3, x1 - x0 - 2), lane * 0.84, Math.min(6, lane * 0.3));
+      g.fill(); g.stroke();
+    }
     // piano notes you played
     if (this.showTargets) {
       for (const x of this.targets) {
@@ -161,7 +181,7 @@ export class Graph {
 
     // "now" marker and the live dot
     g.fillStyle = 'rgba(255,255,255,0.06)';
-    g.fillRect(w - right, 0, 1, h);
+    g.fillRect(nowX, 0, this.lookahead ? 2 : 1, h);
     const last = pts[pts.length - 1];
     if (last && last.m !== null && now - last.t < 0.12) {
       const col = this.colorize && last.c != null ? COLORS[accuracyClass((last.c - Math.round(last.c)) * 100)] : COLORS.line;

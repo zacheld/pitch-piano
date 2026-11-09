@@ -13,10 +13,11 @@ import { Transcriber } from './analysis.js';
 import { EXERCISES, exerciseById, LEVEL_NAMES } from './practice.js';
 import { TOPICS, THEORY_ITEMS } from './theory.js';
 import { RHYTHM } from './rhythm.js';
+import { loadChorales, PartSinging, PARTS, choraleLabel, choraleBlurb } from './partsing.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -113,7 +114,7 @@ function levelText(m) {
 
 // ---------- views ----------
 const graph = new Graph($('graph'));
-graph.nameOf = (m) => spelledName(m);
+graph.nameOf = (m) => spelledName(m, graph.keyOverride || currentKey());
 const staff = new StaffView($('staff'));
 const keyboard = new Keyboard({
   viewport: $('kbd'), inner: $('kbdInner'), minimap: $('minimap'),
@@ -459,9 +460,9 @@ function stopSeq() {
 }
 
 function layoutExercise() {
-  staff.padTop = practice ? $('exBar').offsetHeight : 0;
-  staff.padBottom = practice ? $('exPanel').offsetHeight : 0;
-  staff.dirty = true;
+  graph.padTop = staff.padTop = practice ? $('exBar').offsetHeight : 0;
+  graph.padBottom = staff.padBottom = practice ? $('exPanel').offsetHeight : 0;
+  staff.dirty = true; graph.dirty = true;
 }
 const ui = {
   title: (t) => setText($('exTitle'), t),
@@ -539,7 +540,10 @@ const env = {
     a.gain.setValueAtTime(0, t); a.gain.linearRampToValueAtTime(0.5, t + 0.003); a.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
     o.connect(a).connect(piano.out); o.start(t); o.stop(t + 0.16);
   },
-  noteAt: (m, t, dur) => piano.playAt(m, t, dur),
+  noteAt: (m, t, dur, gain = 1) => piano.playAt(m, t, dur, gain),
+  stopScheduled: () => piano.stopScheduled(),
+  graph,
+  vtOf: (audioT) => vt + (audioT - ctx.currentTime),
   pad: (show) => { $('tapPad').hidden = !show; layoutExercise(); },
   animate: (on) => { if (staff.exercise) staff.exercise.animate = on; staff.dirty = true; },
   syllables: () => S.counting,
@@ -558,11 +562,15 @@ $('tapPad').addEventListener('pointerdown', (e) => {
 });
 
 function startPractice(id) {
-  const def = exerciseById(id) || THEORY_ITEMS[id] || RHYTHM.find((x) => x.id === id);
+  let def = exerciseById(id) || THEORY_ITEMS[id] || RHYTHM.find((x) => x.id === id);
+  if (!def && id.startsWith('chorale:')) {
+    const c = (chorales || []).find((x) => x.id === id.slice(8));
+    if (c) def = { id: 'partsing', title: 'Part-singing', make: (e, o) => new PartSinging(e, { ...o, chorale: c, part: S.part || partFor() }) };
+  }
   if (!def) return;
   stopPractice(); stopReplay();
   closeSheet();
-  const opts = { level: (S.levels || {})[id] || def.defaultLevel || 'medium' };
+  const opts = { level: (S.levels || {})[def.id || id] || def.defaultLevel || 'medium' };
   practiceDef = def;
   practice = def.make(env, opts);
   $('graphWrap').classList.add('exercising');
@@ -576,7 +584,8 @@ function startPractice(id) {
 }
 function stopPractice() {
   if (!practice) return;
-  practice.stop(); stopSeq();
+  practice.stop(); stopSeq(); piano.stopScheduled();
+  graph.script = []; graph.lookahead = 0; graph.keyOverride = null;
   $('tapPad').hidden = true;
   practice = null; practiceDef = null;
   staff.setExercise(null);
@@ -617,6 +626,7 @@ const MENU = [
     items: () => EXERCISES.filter((x) => x.section === 'sing') },
   { id: 'ear', icon: '👂', title: 'Ear training', blurb: 'Scale degrees, chords by ear, note naming.',
     items: () => [EXERCISES.find((x) => x.id === 'degrees'), THEORY_ITEMS['quiz-chordear'], EXERCISES.find((x) => x.id === 'naming')] },
+  { id: 'part', icon: '🎼', title: 'Part-singing', blurb: 'Sing your part of a Bach chorale while the piano plays the others.', chorales: true },
   { id: 'rhythm', icon: '🥁', title: 'Rhythm', blurb: 'Learn to count, tap rhythms, hear rhythms, vowel on the beat, metronome.', items: () => RHYTHM },
   { id: 'theory', icon: '📖', title: 'Theory', blurb: 'Keys and key signatures, finding the key, chords.', topics: () => TOPICS },
   { id: 'tools', icon: '🧰', title: 'Tools', blurb: 'Held note, drone, tuning check, record & replay.',
@@ -655,6 +665,11 @@ function openSection(id) {
     const g = el('div', 'group ex-list');
     body.appendChild(g);
     if (m.topics) for (const topic of m.topics()) menuRow(g, { title: topic.title, blurb: topic.blurb, onClick: () => openTopicDetail(topic, id) });
+    if (m.chorales) {
+      body.insertBefore(el('p', 'ex-detail-p', 'Pick a chorale. You’ll see your part coming in from the right, hear the other three voices on the piano, and each note turns green or orange as you sing it. Headphones help.'), g);
+      if (!chorales) { g.appendChild(el('div', 'about', 'Loading…')); loadChorales().then((d) => { chorales = d; if ($('sheetTitle').textContent === m.title) openSection(id); }); }
+      else for (const c of chorales) menuRow(g, { title: choraleLabel(c), blurb: choraleBlurb(c), onClick: () => openChoraleDetail(c) });
+    }
     if (m.items) for (const def of m.items()) menuRow(g, { title: def.title, blurb: def.blurb, onClick: () => openItemDetail(def, () => openSection(id)) });
     for (const x of m.extra || []) menuRow(g, { title: x.title, blurb: x.blurb, tag: x.title === 'Drone' && drone.on ? 'ON' : null, onClick: x.open });
   }, { back: openMenu });
@@ -681,6 +696,27 @@ function openItemDetail(def, back) {
     go.addEventListener('click', () => startPractice(def.id));
     body.appendChild(go);
   }, { back });
+}
+
+let chorales = null;
+const partFor = () => ({ bass: 'B', baritone: 'B', tenor: 'T', alto: 'A', mezzo: 'A', soprano: 'S' }[S.voice] || 'T');
+function openChoraleDetail(c) {
+  openSheet(choraleLabel(c), (body) => {
+    body.appendChild(el('p', 'ex-detail-p', `${choraleBlurb(c)}. Easy: slower, with your part played quietly as a guide. Medium: normal speed, no guide. Hard: faster.`));
+    const g = section(body, 'Your part');
+    const seg = el('div', 'seg');
+    const cur = S.part || partFor();
+    for (const [v, name] of PARTS) {
+      const b = el('button', cur === v ? 'sel' : '', name);
+      b.addEventListener('click', () => { S.part = v; save(); for (const x of seg.children) x.classList.toggle('sel', x === b); });
+      seg.appendChild(b);
+    }
+    const row = el('div', 'row stack'); row.appendChild(seg); g.appendChild(row);
+    levelPicker(body, { id: 'partsing', levels: true });
+    const go = el('button', 'start-ex', 'Start');
+    go.addEventListener('click', () => startPractice('chorale:' + c.id));
+    body.appendChild(go);
+  }, { back: () => openSection('part') });
 }
 
 function openTopicDetail(topic, sectionId) {
@@ -804,7 +840,8 @@ function openSettings() {
     const about = el('div', 'about');
     about.innerHTML = `Pitch Piano ${VERSION}. Your own app: no ads, no account, nothing leaves your phone.<br>
       Piano: Steinway B recordings from the Versilian Community Sample Library (CC0), Versilian Studios / Sam Gossner.<br>
-      Music symbols: Bravura (SIL Open Font License), Steinberg Media Technologies.`;
+      Music symbols: Bravura (SIL Open Font License), Steinberg Media Technologies.<br>
+      Chorales: J. S. Bach (public domain), encodings from the music21 corpus.`;
     g.appendChild(about);
     const row = el('div', 'row');
     const reset = el('button', 'danger', 'Reset all settings');

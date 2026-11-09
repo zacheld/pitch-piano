@@ -3,13 +3,13 @@
 //   time you open it), falling back to the stored copy when offline or the network is slow.
 // - Piano samples: always from the stored copy (they never change).
 // Each release gets a new VERSION; the old stored copy is removed once the new one is in place.
-const VERSION = 'pitch-piano-1.4.0';
+const VERSION = 'pitch-piano-1.5.0';
 const CORE = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/pitch.js', 'js/notes.js', 'js/graph.js', 'js/keyboard.js', 'js/piano-audio.js',
   'js/notation.js', 'js/glyphs.js', 'js/staff.js', 'js/melody.js', 'js/analysis.js', 'js/practice.js',
   'js/drone.js', 'js/recorder.js', 'js/rec-worklet.js', 'js/theory.js',
-  'js/rhythm-core.js', 'js/rhythm-view.js', 'js/rhythm.js',
+  'js/rhythm-core.js', 'js/rhythm-view.js', 'js/rhythm.js', 'js/partsing.js', 'data/chorales.json',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'icons/icon-v2-180.png', 'icons/icon-v2-192.png', 'icons/icon-v2-512.png',
   'icons/icon-v3-180.png', 'icons/icon-v3-192.png', 'icons/icon-v3-512.png',

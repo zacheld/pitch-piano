@@ -164,6 +164,19 @@ export class PianoAudio {
     src.connect(amp).connect(this.out);
     src.start(when, s.offset);
     src.stop(when + dur + 1);
+    const v = { src, amp };
+    (this.scheduled || (this.scheduled = new Set())).add(v);
+    src.onended = () => this.scheduled.delete(v);
+  }
+  /** Silence every note scheduled with playAt (e.g. when part-singing is stopped). */
+  stopScheduled() {
+    if (!this.scheduled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    for (const v of this.scheduled) {
+      v.amp.gain.cancelScheduledValues(now); v.amp.gain.setValueAtTime(0, now);
+      try { v.src.stop(now + 0.02); } catch (e) { /* not started */ }
+    }
+    this.scheduled.clear();
   }
 
   /** Key released. With sustain the note rings out on its own, like holding the pedal. */
