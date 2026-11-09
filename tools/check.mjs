@@ -166,7 +166,7 @@ try {
     return out;
   });
   ok(icons.every((l) => / 200 image\/png$/.test(l)), 'all icon addresses load (' + icons.length + ')' + (icons.every((l) => / 200 /.test(l)) ? '' : ': ' + icons.join(' | ')));
-  await p2.locator('#startBtn').click();
+  await p2.locator('#micBtn').click();
   await p2.waitForFunction(() => window.__pp.listening, null, { timeout: 5000 });
   const routeOn = await p2.evaluate(() => ({ route: window.__pp.piano.route, playing: window.__pp.piano.el && !window.__pp.piano.el.paused }));
   ok(routeOn.route === 'stream' && routeOn.playing, `while listening, piano plays through the call-audio path (${routeOn.route}, element ${routeOn.playing ? 'playing' : 'not playing'})`);
@@ -208,7 +208,7 @@ try {
   const { generateMelody, makeRng } = await import('../js/melody.js');
   const { keyById } = await import('../js/notation.js');
   const SEED = 5;
-  const melody = generateMelody({ key: keyById('C'), level: 1, length: 6, low: 50, high: 69, rng: makeRng(SEED) }).notes.map((n) => n.midi);
+  const melody = generateMelody({ key: keyById('C'), level: 2, length: 6, low: 50, high: 69, rng: makeRng(SEED) }).notes.map((n) => n.midi);
   const melWav = path.join(out, 'test-melody.wav');
   testVoice(melWav, melody);
   const ch3 = await chromium.launch({ executablePath: CHROME, headless: true, args: [
@@ -219,7 +219,7 @@ try {
   p3.on('pageerror', (e) => errs3.push(e.message));
   await p3.goto(APP + '?seed=' + SEED);
   await p3.waitForFunction(() => window.__pp && window.__pp.piano.ready, null, { timeout: 30000 });
-  await p3.evaluate(() => window.__pp.set('key', 'C'));
+  await p3.evaluate(() => { window.__pp.set('key', 'C'); window.__pp.set('practiceKey', 'mine'); window.__pp.set('levels', { sight: 'easy' }); });
   await p3.evaluate(() => window.__pp.startPractice('sight'));
   const shown3 = await p3.evaluate(() => window.__pp.practice.notes.map((n) => n.midi));
   ok(JSON.stringify(shown3) === JSON.stringify(melody), `the app shows the expected melody (${shown3.join(' ')})`);

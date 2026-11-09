@@ -65,7 +65,7 @@ test('staff positions: middle C, ledger lines, tenor treble-8 sounds an octave d
   assert.equal(STAVES.treble8.glyph, 'gClef8vb');
 });
 
-test('clef views: grand staff splits at middle C; "both" shows every note on both staves', () => {
+test('clef views: grand staff splits at middle C; "both" (tenor + bass) shows every note on both staves', () => {
   assert.deepEqual(stavesFor('grand', 60), [0]);
   assert.deepEqual(stavesFor('grand', 59), [1]);
   assert.deepEqual(stavesFor('both', 50), [0, 1]);

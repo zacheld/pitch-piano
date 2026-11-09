@@ -157,7 +157,7 @@ export class PitchTracker {
     // a fresh start after even a short breath is a new note: don't average it with the last one
     if (this.silentFrom != null && t - this.silentFrom >= 0.05) this.history.length = 0;
     this.silentFrom = null;
-    let m = freqToMidi(res.freq, this.a4);
+    let m = freqToMidi(res.freq, this.a4) + (this.calib || 0) / 100; // calib: correction from the tuning check
 
     // Octave guard: a sudden jump of ~1 or 2 octaves for a few frames is almost always a detection
     // error (a strong harmonic winning), not a real leap. Fold it back unless it persists; and if a

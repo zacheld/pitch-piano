@@ -10,12 +10,12 @@ import { karaokeBlock, midiToFreq, A4_PRESETS } from './notes.js';
 import { KEYS, NO_KEY, keyById, spell, noteName, noteText, solfege, CLEF_VIEWS } from './notation.js';
 import { chooseTonic, makeRng, LEVELS } from './melody.js';
 import { Transcriber } from './analysis.js';
-import { EXERCISES, exerciseById } from './practice.js';
+import { EXERCISES, exerciseById, LEVEL_NAMES } from './practice.js';
 import { TOPICS, THEORY_ITEMS } from './theory.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 
-const VERSION = '1.2.1';
+const VERSION = '1.3.0';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -32,7 +32,7 @@ const DEFAULTS = {
   highlight: true, followKeys: true, showTargets: true, keyLabels: 'white', keySize: 'm', sustain: true, volume: 0.8,
   echo: false, callAudio: true,
   view: 'graph', key: 'C', clef: 'tenor', staffLabels: 'names', staffLine: true,
-  voice: 'tenor', rangeLow: null, rangeHigh: null, strict: 'normal', droneFifth: true, ex: {}, practiceTab: 'sing',
+  voice: 'tenor', rangeLow: null, rangeHigh: null, strict: 'normal', droneFifth: true, ex: {}, levels: {}, practiceKey: 'random', calib: 0,
 };
 
 // ---------- storage (wrapped: private mode or cleared storage must never break the app) ----------
@@ -71,7 +71,12 @@ const drone = new Drone(ctx, piano.out);
 const recorder = new Recorder(ctx, piano.out);
 
 // iOS starts audio suspended until a tap; resume on any touch (also after phone calls or other interruptions)
-const wake = () => { if (ctx.state !== 'running') ctx.resume().catch(() => {}); };
+let resumeMic = false;
+const wake = () => {
+  if (ctx.state !== 'running') ctx.resume().catch(() => {});
+  if (piano.route === 'stream' && piano.el && piano.el.paused) { const p = piano.el.play(); if (p && p.catch) p.catch(() => {}); }
+  if (resumeMic && !listening && !starting) { resumeMic = false; startMic(); }
+};
 for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(ev, wake, { capture: true, passive: true });
 
 // ---------- state ----------
@@ -199,10 +204,15 @@ function stopMic() {
   render();
 }
 
+// Leaving the app with the mic on used to leave the sound dead on return (iOS pauses the capture and
+// the call-audio path). So: release the mic when the app goes to the background, and bring it back
+// with the first touch after returning (a touch is needed for iOS to allow audio again).
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
-  wake();
-  if (mic && mic.stream.getAudioTracks().every((t) => t.readyState === 'ended')) stopMic();
+  if (document.visibilityState === 'hidden') {
+    if (listening) { resumeMic = true; stopMic(); }
+    return;
+  }
+  if (ctx.state !== 'running') ctx.resume().catch(() => {});
 });
 
 // ---------- readout ----------
@@ -257,16 +267,18 @@ $('rangeChip').addEventListener('click', () => {
 });
 
 // ---------- buttons ----------
+let toastTimer = 0;
 function showMsg(text) {
-  $('msgText').textContent = text || 'Sing, and your pitch draws here.';
-  $('msgText').classList.toggle('err', !!text);
+  const t = $('toast');
+  clearTimeout(toastTimer);
+  t.hidden = !text;
+  if (text) { t.textContent = text; toastTimer = setTimeout(() => { t.hidden = true; }, 7000); }
 }
+$('toast').addEventListener('click', () => { $('toast').hidden = true; });
 
 function render() {
   $('micBtn').classList.toggle('on', listening);
   $('micBtn').setAttribute('aria-label', listening ? 'Stop listening' : 'Start listening');
-  $('graphMsg').hidden = listening || !!practice || !!replay;
-  $('startBtn').disabled = starting;
   $('pauseBtn').disabled = !listening;
   $('pauseBtn').classList.toggle('paused', paused);
   $('pauseBtn').setAttribute('aria-label', paused ? 'Resume' : 'Pause');
@@ -286,7 +298,6 @@ function render() {
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 $('micBtn').addEventListener('click', () => (listening ? stopMic() : startMic()));
-$('startBtn').addEventListener('click', startMic);
 $('pauseBtn').addEventListener('click', () => { if (listening) { paused = !paused; render(); } });
 $('octDown').addEventListener('click', () => keyboard.shift(-1));
 $('octUp').addEventListener('click', () => keyboard.shift(1));
@@ -334,7 +345,7 @@ function loop(ts) {
     lastDetect = ts;
     mic.analyser.getFloatTimeDomainData(mic.buf);
     const o = tracker.push(mic.det.detect(mic.buf), vt);
-    const muted = playing || vt < muteUntil;
+    const muted = (playing || vt < muteUntil) && !(practice && practice.hearsItself);
     if (muted && practice) {
       processFrame({ midi: null, centre: null }, { rangeOk: false });
       if (practice.needsMic) practice.frame(vt, null, 0, null, null);
@@ -424,9 +435,9 @@ function setDrone(on) {
 $('droneChip').addEventListener('click', () => setDrone(false));
 
 // ---------- practice ----------
-function playSeq(seq) {
+function playSeq(seq, { listen = false } = {}) {
   const token = ++playToken;
-  playing = true;
+  playing = !listen;
   return (async () => {
     for (const step of seq) {
       if (token !== playToken) break;
@@ -452,6 +463,7 @@ function layoutExercise() {
 }
 const ui = {
   title: (t) => setText($('exTitle'), t),
+  question: (html) => { if ($('exQuestion').innerHTML !== html) { $('exQuestion').innerHTML = html; layoutExercise(); } },
   score: (t) => setText($('exScore'), t),
   prompt: (html) => { if ($('exPrompt').innerHTML !== html) { $('exPrompt').innerHTML = html; layoutExercise(); } },
   buttons: (list) => {
@@ -481,9 +493,10 @@ const ui = {
     layoutExercise();
   },
 };
+const randomKey = () => KEYS[Math.floor(rng() * KEYS.length)];
 const env = {
-  key: practiceKey,
-  randomKey: () => KEYS[Math.floor(rng() * KEYS.length)],
+  key: () => (S.practiceKey === 'mine' ? practiceKey() : randomKey()),
+  randomKey,
   range: practiceRange,
   full: fullRange,
   tol: () => STRICT[S.strict] || 35,
@@ -497,6 +510,19 @@ const env = {
   load: (id, d) => store.get('ex.' + id, d),
   save: (id, v) => store.set('ex.' + id, v),
   startById: (id) => startPractice(id),
+  tone: (m, seconds) => {
+    const o = ctx.createOscillator(), a = ctx.createGain(), t = ctx.currentTime;
+    o.frequency.value = midiToFreq(m, S.a4);
+    a.gain.setValueAtTime(0, t); a.gain.linearRampToValueAtTime(0.35, t + 0.03);
+    a.gain.setValueAtTime(0.35, t + seconds - 0.05); a.gain.linearRampToValueAtTime(0, t + seconds);
+    o.connect(a).connect(piano.out); o.start(t); o.stop(t + seconds + 0.05);
+  },
+  diag: () => {
+    const tr = mic && mic.stream.getAudioTracks()[0];
+    const st = tr && tr.getSettings ? tr.getSettings() : {};
+    return `Audio ${ctx.sampleRate} Hz${st.sampleRate ? `, microphone ${st.sampleRate} Hz` : ''}, A4 = ${S.a4}, correction ${S.calib || 0}¢.`;
+  },
+  setCalibration: (c) => { S.calib = (S.calib || 0) + c; save(); applySettings(); },
 };
 
 function startPractice(id) {
@@ -504,12 +530,12 @@ function startPractice(id) {
   if (!def) return;
   stopPractice(); stopReplay();
   closeSheet();
-  const opts = Object.assign({}, def.defaults || {}, (S.ex || {})[id]);
+  const opts = { level: (S.levels || {})[id] || def.defaultLevel || 'medium' };
   practiceDef = def;
   practice = def.make(env, opts);
   $('graphWrap').classList.add('exercising');
   $('exBar').hidden = false; $('exPanel').hidden = false;
-  ui.title(def.title); ui.score(''); ui.prompt(''); ui.answers(null); ui.buttons([]);
+  ui.title(def.title); ui.score(''); ui.question(''); ui.prompt(''); ui.answers(null); ui.buttons([]);
   setStageView('staff', true);
   if (practice.needsMic && !listening) startMic();
   practice.start();
@@ -528,7 +554,7 @@ function stopPractice() {
   render();
 }
 $('exClose').addEventListener('click', stopPractice);
-$('practiceBtn').addEventListener('click', () => openPracticeSheet());
+$('practiceBtn').addEventListener('click', () => openMenu());
 
 // ---------- sheets (settings, practice, key) ----------
 function openSheet(title, build, { back = null } = {}) {
@@ -552,44 +578,78 @@ $('scrim').addEventListener('click', closeSheet);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const section = (body, title) => { body.appendChild(el('div', 'section-title', title)); const g = el('div', 'group'); body.appendChild(g); return g; };
 
-const TABS = [['sing', 'Singing'], ['ear', 'Ear'], ['theory', 'Theory'], ['tools', 'Tools']];
-function openPracticeSheet() {
-  openSheet('Practice', (body) => {
-    const tabs = el('div', 'seg hub-tabs');
-    for (const [id, label] of TABS) {
-      const b = el('button', S.practiceTab === id ? 'sel' : '', label);
-      b.addEventListener('click', () => { S.practiceTab = id; save(); openPracticeSheet(); });
-      tabs.appendChild(b);
-    }
-    body.appendChild(tabs);
+// ---------- the menu: sections → items → (level) → start ----------
+const MENU = [
+  { id: 'sing', icon: '🎤', title: 'Sing', blurb: 'Sight-singing, intervals, echo, pitch memory, scale & return.',
+    items: () => EXERCISES.filter((x) => x.section === 'sing') },
+  { id: 'ear', icon: '👂', title: 'Ear training', blurb: 'Scale degrees, chords by ear, note naming.',
+    items: () => [EXERCISES.find((x) => x.id === 'degrees'), THEORY_ITEMS['quiz-chordear'], EXERCISES.find((x) => x.id === 'naming')] },
+  { id: 'theory', icon: '📖', title: 'Theory', blurb: 'Keys and key signatures, finding the key, chords.', topics: () => TOPICS },
+  { id: 'tools', icon: '🧰', title: 'Tools', blurb: 'Held note, drone, tuning check, record & replay.',
+    items: () => EXERCISES.filter((x) => x.section === 'tools'),
+    extra: [
+      { title: 'Drone', blurb: 'A steady home note to tune against while you sing.', open: () => openDroneDetail() },
+      { title: 'Record & replay', blurb: 'Use the ● button at the top: sing, stop, then replay with the graph or staff.', open: () => closeSheet() },
+    ] },
+];
+const menuSection = (id) => MENU.find((m) => m.id === id);
+
+function menuRow(parent, { icon, title, blurb, tag, onClick }) {
+  const r = el('button', 'ex-row menu-row');
+  if (icon) r.appendChild(el('span', 'menu-ico', icon));
+  const txt = el('div');
+  const t = el('div', 't', title);
+  if (tag) t.appendChild(el('span', 'on-tag', tag));
+  txt.append(t, el('div', 'd', blurb));
+  r.append(txt, el('span', 'chev', '›'));
+  r.addEventListener('click', onClick);
+  parent.appendChild(r);
+}
+
+function openMenu() {
+  openSheet('Menu', (body) => {
     const g = el('div', 'group ex-list');
     body.appendChild(g);
-    const row = (title, blurb, onClick, tag) => {
-      const r = el('button', 'ex-row');
-      const txt = el('div');
-      const t = el('div', 't', title);
-      if (tag) t.appendChild(el('span', 'on-tag', tag));
-      txt.append(t, el('div', 'd', blurb));
-      r.append(txt, el('span', 'chev', '›'));
-      r.addEventListener('click', onClick);
-      g.appendChild(r);
-    };
-    if (S.practiceTab === 'theory') {
-      for (const topic of TOPICS) row(topic.title, topic.blurb, () => openTopicDetail(topic));
-    } else {
-      for (const def of EXERCISES.filter((x) => x.tab === S.practiceTab)) row(def.title, def.blurb, () => openExerciseDetail(def));
-      if (S.practiceTab === 'tools') {
-        row('Drone', 'A steady home note to tune against while you sing.', openDroneDetail, drone.on ? 'ON' : null);
-        row('Record & replay', 'Use the ● button at the top: sing, stop, then replay with the graph or staff.', () => closeSheet());
-      }
-    }
-    const hint = { sing: 'Exercises where you sing and the app listens.', ear: 'Listening exercises: answer by tapping.',
-      theory: 'Short lessons with examples you can play, each followed by a quiz.', tools: 'Helpers to use any time.' }[S.practiceTab];
-    body.appendChild(el('p', 'muted hub-hint', hint));
+    for (const m of MENU) menuRow(g, { icon: m.icon, title: m.title, blurb: m.blurb, tag: m.id === 'tools' && drone.on ? 'DRONE ON' : null, onClick: () => openSection(m.id) });
+    body.appendChild(el('p', 'muted hub-hint', 'The main screen is always the pitch display and piano. Everything else lives here.'));
   });
 }
 
-function openTopicDetail(topic) {
+function openSection(id) {
+  const m = menuSection(id);
+  openSheet(m.title, (body) => {
+    const g = el('div', 'group ex-list');
+    body.appendChild(g);
+    if (m.topics) for (const topic of m.topics()) menuRow(g, { title: topic.title, blurb: topic.blurb, onClick: () => openTopicDetail(topic, id) });
+    if (m.items) for (const def of m.items()) menuRow(g, { title: def.title, blurb: def.blurb, onClick: () => openItemDetail(def, () => openSection(id)) });
+    for (const x of m.extra || []) menuRow(g, { title: x.title, blurb: x.blurb, tag: x.title === 'Drone' && drone.on ? 'ON' : null, onClick: x.open });
+  }, { back: openMenu });
+}
+
+/** One level choice (if the item has levels) and a Start button. */
+function levelPicker(parent, def) {
+  if (!def.levels) return;
+  const seg = el('div', 'seg');
+  const cur = (S.levels || {})[def.id] || def.defaultLevel || 'medium';
+  for (const [v, text] of LEVEL_NAMES) {
+    const b = el('button', cur === v ? 'sel' : '', text);
+    b.addEventListener('click', () => { S.levels = { ...(S.levels || {}), [def.id]: v }; save(); for (const x of seg.children) x.classList.toggle('sel', x === b); });
+    seg.appendChild(b);
+  }
+  parent.appendChild(seg);
+}
+
+function openItemDetail(def, back) {
+  openSheet(def.title, (body) => {
+    body.appendChild(el('p', 'ex-detail-p', def.why || def.blurb));
+    levelPicker(body, def);
+    const go = el('button', 'start-ex', 'Start');
+    go.addEventListener('click', () => startPractice(def.id));
+    body.appendChild(go);
+  }, { back });
+}
+
+function openTopicDetail(topic, sectionId) {
   openSheet(topic.title, (body) => {
     body.appendChild(el('p', 'ex-detail-p', topic.blurb));
     const learn = el('button', 'start-ex', 'Read the lesson');
@@ -599,54 +659,13 @@ function openTopicDetail(topic) {
       const g = section(body, 'Quiz: ' + q.title);
       const box = el('div', 'row stack');
       box.appendChild(el('div', 'hint', q.blurb));
-      const opts = (S.ex[q.id] = Object.assign({}, q.defaults || {}, S.ex[q.id]));
-      for (const o of q.options || []) {
-        const seg = el('div', 'seg');
-        for (const [v, text] of o.choices) {
-          const b = el('button', opts[o.key] === v ? 'sel' : '', text);
-          b.addEventListener('click', () => { opts[o.key] = v; save(); for (const x of seg.children) x.classList.toggle('sel', x === b); });
-          seg.appendChild(b);
-        }
-        box.append(el('div', 'label', o.label), seg);
-      }
+      levelPicker(box, q);
       const go = el('button', 'chip practice', 'Start quiz');
       go.addEventListener('click', () => startPractice(q.id));
       box.appendChild(go);
       g.appendChild(box);
     }
-  }, { back: openPracticeSheet });
-}
-
-function openExerciseDetail(def) {
-  openSheet(def.title, (body) => {
-    const box = el('div', 'ex-detail');
-    box.appendChild(el('p', null, def.why));
-    body.appendChild(box);
-    const opts = (S.ex[def.id] = Object.assign({}, def.defaults, S.ex[def.id]));
-    if (def.options.length) {
-      const g = section(body, 'Options');
-      for (const o of def.options) {
-        const row = el('div', 'row stack');
-        row.appendChild(el('div', 'label', o.label));
-        const seg = el('div', 'seg');
-        const hint = o.hintFrom ? el('div', 'hint') : null;
-        const showHint = () => { if (hint) { const l = o.hintFrom.find((x) => x.n === opts[o.key]); hint.textContent = l ? `${l.name}: ${l.desc}` : ''; } };
-        for (const [v, text] of o.choices) {
-          const b = el('button', opts[o.key] === v ? 'sel' : '', text);
-          b.addEventListener('click', () => { opts[o.key] = v; save(); for (const x of seg.children) x.classList.toggle('sel', x === b); showHint(); });
-          seg.appendChild(b);
-        }
-        row.appendChild(seg);
-        if (hint) { row.appendChild(hint); showHint(); }
-        g.appendChild(row);
-      }
-    }
-    const k = practiceKey(), r = practiceRange();
-    body.appendChild(el('p', 'muted', `Key: ${k.name} · range ${spelledName(r.low)}–${spelledName(r.high)} (${voice().label}). Change these in Settings.`));
-    const go = el('button', 'start-ex', 'Start');
-    go.addEventListener('click', () => startPractice(def.id));
-    body.appendChild(go);
-  }, { back: openPracticeSheet });
+  }, { back: () => openSection(sectionId) });
 }
 
 function openDroneDetail() {
@@ -665,7 +684,7 @@ function openDroneDetail() {
     go.addEventListener('click', () => { setDrone(!drone.on); closeSheet(); });
     body.appendChild(go);
     body.appendChild(el('p', 'muted', 'It keeps playing while you use the rest of the app. Tap “Drone ■” on the screen to stop it.'));
-  }, { back: openPracticeSheet });
+  }, { back: () => openSection('tools') });
 }
 
 function openKeySheet(back = null) {
@@ -703,6 +722,7 @@ const SECTIONS = [
     { key: 'speed', type: 'seg', label: 'Response', options: [['fast', 'Fast'], ['normal', 'Normal'], ['smooth', 'Smooth']],
       hint: 'Fast follows quick runs and ornaments; Smooth gives a calmer line and steadier note name.' },
     { key: 'a4', type: 'tuning', label: 'Tuning (A4)', hint: 'Sets the note names, the piano and the drone. 415 for Baroque pitch.' },
+    { type: 'calib', label: 'Pitch correction', hint: 'Set by Menu → Tools → Tuning check, if the phone hears pitch slightly off.' },
   ] },
   { title: 'Display', items: [
     { key: 'levelStyle', type: 'seg', label: 'Octave label under the note',
@@ -717,6 +737,8 @@ const SECTIONS = [
   { title: 'Practice', items: [
     { key: 'voice', type: 'seg', label: 'Your voice', options: Object.entries(VOICES).slice(0, 3).map(([id, v]) => [id, v.label]), more: Object.entries(VOICES).slice(3).map(([id, v]) => [id, v.label]) },
     { type: 'range', label: 'Practice range', hint: 'Melodies and notes in the exercises stay inside this range.' },
+    { key: 'practiceKey', type: 'seg', label: 'Keys in practice', options: [['random', 'Random'], ['mine', 'My key']],
+      hint: 'Random: a new key each time. My key: the key chosen on the main screen.' },
     { key: 'strict', type: 'seg', label: 'How close counts as right', options: [['relaxed', '±50¢'], ['normal', '±35¢'], ['strict', '±20¢']],
       hint: 'Measured on the vibrato-averaged pitch, so normal vibrato is fine.' },
   ] },
@@ -774,6 +796,14 @@ function buildRow(it) {
     sw.setAttribute('aria-checked', String(!!S[it.key]));
     sw.addEventListener('click', () => { set(!S[it.key]); sw.setAttribute('aria-checked', String(!!S[it.key])); });
     row.append(left, sw);
+    return row;
+  }
+  if (it.type === 'calib') {
+    row.className = 'row';
+    const left = el('div'); left.append(label, hint);
+    const b = el('button', 'chip', S.calib ? `${S.calib > 0 ? '+' : ''}${S.calib}¢ · Reset` : 'None');
+    b.addEventListener('click', () => { if (S.calib) { S.calib = 0; save(); applySettings(); b.textContent = 'None'; } });
+    row.append(left, b);
     return row;
   }
   if (it.type === 'keyrow') {
@@ -868,7 +898,7 @@ function openSettingsAt(title) {
 }
 
 function applySettings() {
-  tracker.a4 = S.a4; tracker.setSensitivity(S.sensitivity); tracker.setSpeed(S.speed);
+  tracker.a4 = S.a4; tracker.calib = S.calib || 0; tracker.setSensitivity(S.sensitivity); tracker.setSpeed(S.speed);
   hold.hold = (SPEEDS[S.speed] || SPEEDS.normal).hold;
   piano.a4 = S.a4; piano.setVolume(S.volume);
   if (drone.on && drone.a4 !== S.a4) drone.retune(S.a4);
@@ -910,7 +940,7 @@ window.__pp = {
   S, graph, staff, keyboard, piano, drone, recorder, tracker, ctx, VERSION,
   get listening() { return listening; }, get shown() { return shown; }, get range() { return range; },
   get practice() { return practice; }, get playing() { return playing; }, get take() { return recTake; }, get replaying() { return !!replay; },
-  startMic, stopMic, startPractice, stopPractice, setDrone, toggleRecord, startReplay, stopReplay, openSettings, openPracticeSheet,
+  startMic, stopMic, startPractice, stopPractice, setDrone, toggleRecord, startReplay, stopReplay, openSettings, openMenu, openSection,
   setKey: (id) => { S.key = id; save(); applySettings(); },
   set: (k, v) => { S[k] = v; save(); applySettings(); },
 };

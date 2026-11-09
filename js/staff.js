@@ -176,11 +176,6 @@ export class StaffView {
       }
       this.glyph(hollow ? 'noteheadHalf' : 'noteheadBlack', x, y, L.sp, color);
     }
-    if (idxs.length > 1) { // "both" view: link the two copies of the same note
-      this.g.strokeStyle = color; this.g.globalAlpha = 0.3; this.g.setLineDash([2, 3]); this.g.lineWidth = 1;
-      this.g.beginPath(); this.g.moveTo(x + NOTE_W * L.sp / 2, ys[0] + L.sp * 0.6); this.g.lineTo(x + NOTE_W * L.sp / 2, ys[1] - L.sp * 0.6); this.g.stroke();
-      this.g.setLineDash([]); this.g.globalAlpha = 1;
-    }
     if (label) this.label(L, x, label, color);
     return n;
   }
@@ -242,6 +237,18 @@ export class StaffView {
     }
   }
 
+  /** ▲ above the staff (go higher), ▼ below it (go lower), ✓ when you're on it. */
+  arrow(L, x, dir) {
+    const g = this.g, sp = L.sp, cx = x + NOTE_W * sp / 2;
+    const top = L.staves[0].top, bottom = L.staves[L.staves.length - 1].bottom;
+    g.fillStyle = dir === 'ok' ? STAFF_COLORS.good : STAFF_COLORS.near;
+    g.beginPath();
+    if (dir === 'up') { const y = top - 3.2 * sp; g.moveTo(cx, y); g.lineTo(cx - sp * 0.9, y + sp * 1.3); g.lineTo(cx + sp * 0.9, y + sp * 1.3); }
+    else if (dir === 'down') { const y = bottom + 3.2 * sp; g.moveTo(cx, y); g.lineTo(cx - sp * 0.9, y - sp * 1.3); g.lineTo(cx + sp * 0.9, y - sp * 1.3); }
+    else { g.font = `800 ${sp * 1.5}px -apple-system, system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('✓', cx, top - 2.6 * sp); return; }
+    g.closePath(); g.fill();
+  }
+
   drawExercise(L) {
     const { sp } = L, g = this.g, items = this.exercise.items;
     const n = Math.max(1, items.length);
@@ -254,11 +261,9 @@ export class StaffView {
         g.fillStyle = 'rgba(100,210,255,0.13)';
         g.fillRect(x - slot * 0.32, L.staves[0].top - sp * 2.5, NOTE_W * sp + slot * 0.64, L.staves[L.staves.length - 1].bottom - L.staves[0].top + sp * 5);
       }
+      if (it.arrow) this.arrow(L, x, it.arrow);
       if (it.state === 'hidden') {
-        g.fillStyle = STAFF_COLORS.hidden;
-        g.font = `700 ${sp * 1.6}px -apple-system, system-ui, sans-serif`;
-        g.textAlign = 'center'; g.textBaseline = 'middle';
-        g.fillText('?', x + NOTE_W * sp / 2, (L.staves[0].top + L.staves[L.staves.length - 1].bottom) / 2);
+        // nothing to show yet (an empty column)
       } else if (it.midi != null || it.notes) {
         const color = { pending: STAFF_COLORS.note, current: STAFF_COLORS.current, good: STAFF_COLORS.good, near: STAFF_COLORS.near,
           off: STAFF_COLORS.off, given: STAFF_COLORS.given, piano: STAFF_COLORS.piano }[it.state] || STAFF_COLORS.note;

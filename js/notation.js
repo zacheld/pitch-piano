@@ -121,7 +121,7 @@ export const CLEF_VIEWS = {
   treble: { staves: ['treble'], label: 'Treble' },
   bass: { staves: ['bass'], label: 'Bass' },
   grand: { staves: ['treble', 'bass'], brace: true, route: 'split', label: 'Grand staff (treble + bass, like piano music)' },
-  both: { staves: ['treble', 'bass'], route: 'both', label: 'Treble + bass: every note shown on both' },
+  both: { staves: ['treble8', 'bass'], route: 'both', label: 'Tenor + bass: every note shown on both' },
   tenorC: { staves: ['tenorC'], label: 'Tenor C clef (early music)' },
 };
 

@@ -217,10 +217,14 @@ class ChordEarQuiz extends Exercise {
   get needsMic() { return false; }
   start() { this.next(); }
   next() {
-    const set = this.opts.set === 'all' ? ['major', 'minor', 'dim', 'aug'] : ['major', 'minor'];
+    const lvl = this.opts.level || 'easy';
+    const set = lvl === 'easy' ? ['major', 'minor'] : lvl === 'medium' ? ['major', 'minor', 'dim'] : ['major', 'minor', 'dim', 'aug'];
     const q = pick(this.env.rng, set);
     const root = 48 + Math.floor(this.env.rng() * 13);
-    Object.assign(this, { q, set, notes: QUALITIES[q].semis.map((x) => root + x), answered: false });
+    let notes = QUALITIES[q].semis.map((x) => root + x);
+    // hard: inversions too (the lowest note moved up an octave, once or twice)
+    if (lvl === 'hard') { const inv = Math.floor(this.env.rng() * 3); for (let i = 0; i < inv; i++) notes = [...notes.slice(1), notes[0] + 12]; }
+    Object.assign(this, { q, set, notes, answered: false });
     this.env.staff.setExercise({ key: null, items: [{ midi: null, state: 'hidden' }] });
     this.ui.prompt('Listen. What kind of chord is it?');
     this.ui.answers(set.map((x) => ({ value: x, label: QUALITIES[x].label })), set.length);
@@ -234,12 +238,14 @@ class ChordEarQuiz extends Exercise {
     const ok = v === this.q;
     this.total++; if (ok) this.right++;
     this.score();
-    const name = noteText(spell(this.notes[0], NO_KEY));
+    const name = noteText(spell(this.root(), NO_KEY));
     this.env.staff.setExercise({ key: null, items: [{ notes: this.notes, state: ok ? 'good' : 'off', label: `${name} ${QUALITIES[this.q].label.toLowerCase()}` }] });
     this.ui.prompt(`${ok ? '✓' : `✗ It was ${QUALITIES[this.q].label.toLowerCase()}.`} ${QUALITIES[this.q].label}: ${QUALITIES[this.q].how}.`);
     this.ui.answers(null);
     this.ui.buttons([{ id: 'hear', label: '▶ Hear it' }, { id: 'next', label: 'Next', primary: true }]);
   }
+  /** The chord's root, even when inverted. */
+  root() { const semis = QUALITIES[this.q].semis; return this.notes.find((m) => semis.every((x) => this.notes.some((n) => ((n - m - x) % 12 + 12) % 12 === 0))); }
   button(id) { if (id === 'hear') this.play(); if (id === 'next') this.next(); }
 }
 
@@ -247,7 +253,8 @@ class RomanQuiz extends Exercise {
   get needsMic() { return false; }
   start() { this.next(); }
   next() {
-    const base = this.opts.keyMode === 'random' ? pick(this.env.rng, MAJORS) : (this.env.key().mode === 'major' ? this.env.key() : relativeMajor(this.env.key()));
+    const k = this.env.key();
+    const base = k.mode === 'major' ? k : relativeMajor(k);
     const t = tonicFor(this.env, base);
     let d = Math.floor(this.env.rng() * 7);
     if (d === this.lastD) d = (d + 1 + Math.floor(this.env.rng() * 6)) % 7;
@@ -285,8 +292,8 @@ export const TOPICS = [
   { id: 'chords', title: 'Chords', blurb: 'Triads, major/minor/diminished/augmented, the chords of a key, cadences.',
     lesson: { id: 'lesson-chords', title: 'Chords', make: (e) => new Lesson(e, { lesson: 'chords', quiz: 'quiz-roman' }) },
     quizzes: [
-      { id: 'quiz-roman', title: 'Chords of the key', blurb: 'A chord on the staff: which one is it (I, ii, … vii°)?', options: [{ key: 'keyMode', label: 'Key', choices: [['mine', 'My key'], ['random', 'Random']] }], defaults: { keyMode: 'mine' }, make: (e, o) => new RomanQuiz(e, o) },
-      { id: 'quiz-chordear', title: 'Chords by ear', blurb: 'Hear a chord: major, minor, diminished or augmented?', options: [{ key: 'set', label: 'Chords', choices: [['mm', 'Major / minor'], ['all', 'All four']] }], defaults: { set: 'mm' }, make: (e, o) => new ChordEarQuiz(e, o) },
+      { id: 'quiz-roman', title: 'Chords of the key', blurb: 'A chord on the staff: which one is it (I, ii, … vii°)?', make: (e, o) => new RomanQuiz(e, o) },
+      { id: 'quiz-chordear', title: 'Chords by ear', blurb: 'Hear a chord: major or minor (easy), plus diminished (medium), plus augmented and inversions (hard).', levels: true, make: (e, o) => new ChordEarQuiz(e, o) },
     ] },
 ];
 /** Every startable theory item (lessons and quizzes) by id. */
