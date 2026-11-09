@@ -4,6 +4,7 @@
 // columns with their state (to sing, current, right, wrong, hidden, given).
 
 import { GLYPHS, ENGRAVING } from './glyphs.js';
+import { drawRhythmView } from './rhythm-view.js';
 import { CLEF_VIEWS, STAVES, spell, positionOn, ledgers, stavesFor, accidentalShown, signatureLetters,
   continuousPosition, noteText, noteName, solfege } from './notation.js';
 
@@ -107,7 +108,7 @@ export class StaffView {
   yOf(L, staffIdx, p) { return L.staves[staffIdx].bottom - p * L.sp / 2; }
 
   // ---------- drawing ----------
-  active() { return this.dirty || this.shift > 0.001; }
+  active() { return this.dirty || this.shift > 0.001 || !!(this.exercise && this.exercise.animate); }
 
   draw(now, dt = 0) {
     const g = this.g, { w, h, dpr } = this;
@@ -117,6 +118,8 @@ export class StaffView {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = '#0d1016';
     g.fillRect(0, 0, w, h);
+    const ex = this.exercise;
+    if (ex && (ex.rhythm || ex.rows || ex.timing)) { drawRhythmView(g, w, h, this.padTop, this.padBottom, ex); return; }
     const L = this.layout();
     this.drawStaves(L);
     if (this.exercise) this.drawExercise(L);

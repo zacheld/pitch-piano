@@ -151,6 +151,21 @@ export class PianoAudio {
     this.voices.set(midi, v);
   }
 
+  /** A note at an exact audio time (for timing checks and scheduled playback). Not tied to a key. */
+  playAt(midi, when, dur, gain = 1) {
+    const s = this.nearest(midi);
+    if (!s || !this.ctx) return;
+    const src = this.ctx.createBufferSource();
+    src.buffer = s.buffer;
+    src.playbackRate.value = Math.pow(2, (midi - s.midi) / 12) * (this.a4 / 440);
+    const amp = this.ctx.createGain();
+    amp.gain.setValueAtTime(s.gain * 0.75 * gain, when);
+    amp.gain.setTargetAtTime(0, when + dur, 0.1);
+    src.connect(amp).connect(this.out);
+    src.start(when, s.offset);
+    src.stop(when + dur + 1);
+  }
+
   /** Key released. With sustain the note rings out on its own, like holding the pedal. */
   noteOff(midi, sustain) {
     if (!this.ctx || sustain) return;

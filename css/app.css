@@ -274,3 +274,6 @@ svg { display: block; }
 .ex-prompt { font-size: 14px; color: #c7cfdd; min-height: 20px; padding-top: 4px; }
 .menu-row .t { display: flex; align-items: center; gap: 8px; }
 .menu-ico { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; font-size: 16px; flex: none; }
+.tap-pad { display: block; width: 100%; height: 96px; margin: 0 0 8px; border: 0; border-radius: 18px; background: #23314c; color: #9fd8ff; font-size: 26px; font-weight: 800; letter-spacing: .1em; touch-action: none; }
+.tap-pad[hidden] { display: none; }
+.tap-pad.hit { background: #2f4a72; }

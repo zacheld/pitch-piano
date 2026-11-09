@@ -12,10 +12,11 @@ import { chooseTonic, makeRng, LEVELS } from './melody.js';
 import { Transcriber } from './analysis.js';
 import { EXERCISES, exerciseById, LEVEL_NAMES } from './practice.js';
 import { TOPICS, THEORY_ITEMS } from './theory.js';
+import { RHYTHM } from './rhythm.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -33,6 +34,7 @@ const DEFAULTS = {
   echo: false, callAudio: true,
   view: 'graph', key: 'C', clef: 'tenor', staffLabels: 'names', staffLine: true,
   voice: 'tenor', rangeLow: null, rangeHigh: null, strict: 'normal', droneFifth: true, ex: {}, levels: {}, practiceKey: 'random', calib: 0,
+  counting: 'numbers', tapOffset: 0, micLatency: null,
 };
 
 // ---------- storage (wrapped: private mode or cleared storage must never break the app) ----------
@@ -523,10 +525,40 @@ const env = {
     return `Audio ${ctx.sampleRate} Hz${st.sampleRate ? `, microphone ${st.sampleRate} Hz` : ''}, A4 = ${S.a4}, correction ${S.calib || 0}¢.`;
   },
   setCalibration: (c) => { S.calib = (S.calib || 0) + c; save(); applySettings(); },
+  now: () => ctx.currentTime,
+  click: (t, accent = false, sub = false) => {
+    const o = ctx.createOscillator(), a = ctx.createGain();
+    o.type = 'square'; o.frequency.value = accent ? 1760 : sub ? 880 : 1320;
+    const v = sub ? 0.08 : accent ? 0.28 : 0.2;
+    a.gain.setValueAtTime(0, t); a.gain.linearRampToValueAtTime(v, t + 0.002); a.gain.exponentialRampToValueAtTime(0.0008, t + 0.05);
+    o.connect(a).connect(piano.out); o.start(t); o.stop(t + 0.06);
+  },
+  wood: (t) => {
+    const o = ctx.createOscillator(), a = ctx.createGain();
+    o.type = 'triangle'; o.frequency.setValueAtTime(700, t); o.frequency.exponentialRampToValueAtTime(420, t + 0.08);
+    a.gain.setValueAtTime(0, t); a.gain.linearRampToValueAtTime(0.5, t + 0.003); a.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+    o.connect(a).connect(piano.out); o.start(t); o.stop(t + 0.16);
+  },
+  noteAt: (m, t, dur) => piano.playAt(m, t, dur),
+  pad: (show) => { $('tapPad').hidden = !show; layoutExercise(); },
+  animate: (on) => { if (staff.exercise) staff.exercise.animate = on; staff.dirty = true; },
+  syllables: () => S.counting,
+  tapOffset: () => S.tapOffset || 0,
+  setTapOffset: (ms) => { S.tapOffset = ms; save(); },
+  micLatency: () => S.micLatency,
+  setMicLatency: (ms) => { S.micLatency = ms; save(); },
 };
+// The tap pad: the time of a touch, converted to the audio clock (touch is near-instant).
+$('tapPad').addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  wake();
+  const t = ctx.currentTime - Math.max(0, (performance.now() - e.timeStamp) / 1000);
+  if (practice && practice.tap) practice.tap(t);
+  $('tapPad').classList.add('hit'); setTimeout(() => $('tapPad').classList.remove('hit'), 90);
+});
 
 function startPractice(id) {
-  const def = exerciseById(id) || THEORY_ITEMS[id];
+  const def = exerciseById(id) || THEORY_ITEMS[id] || RHYTHM.find((x) => x.id === id);
   if (!def) return;
   stopPractice(); stopReplay();
   closeSheet();
@@ -545,6 +577,7 @@ function startPractice(id) {
 function stopPractice() {
   if (!practice) return;
   practice.stop(); stopSeq();
+  $('tapPad').hidden = true;
   practice = null; practiceDef = null;
   staff.setExercise(null);
   $('graphWrap').classList.remove('exercising');
@@ -584,6 +617,7 @@ const MENU = [
     items: () => EXERCISES.filter((x) => x.section === 'sing') },
   { id: 'ear', icon: '👂', title: 'Ear training', blurb: 'Scale degrees, chords by ear, note naming.',
     items: () => [EXERCISES.find((x) => x.id === 'degrees'), THEORY_ITEMS['quiz-chordear'], EXERCISES.find((x) => x.id === 'naming')] },
+  { id: 'rhythm', icon: '🥁', title: 'Rhythm', blurb: 'Learn to count, tap rhythms, hear rhythms, vowel on the beat, metronome.', items: () => RHYTHM },
   { id: 'theory', icon: '📖', title: 'Theory', blurb: 'Keys and key signatures, finding the key, chords.', topics: () => TOPICS },
   { id: 'tools', icon: '🧰', title: 'Tools', blurb: 'Held note, drone, tuning check, record & replay.',
     items: () => EXERCISES.filter((x) => x.section === 'tools'),
@@ -739,6 +773,8 @@ const SECTIONS = [
     { type: 'range', label: 'Practice range', hint: 'Melodies and notes in the exercises stay inside this range.' },
     { key: 'practiceKey', type: 'seg', label: 'Keys in practice', options: [['random', 'Random'], ['mine', 'My key']],
       hint: 'Random: a new key each time. My key: the key chosen on the main screen.' },
+    { key: 'counting', type: 'seg', label: 'Counting syllables', options: [['numbers', '1 e & a'], ['takadimi', 'ta ka di mi']],
+      hint: 'Shown under rhythms. Numbers are the most common; Takadimi names each part of the beat the same way in any meter.' },
     { key: 'strict', type: 'seg', label: 'How close counts as right', options: [['relaxed', '±50¢'], ['normal', '±35¢'], ['strict', '±20¢']],
       hint: 'Measured on the vibrato-averaged pitch, so normal vibrato is fine.' },
   ] },
