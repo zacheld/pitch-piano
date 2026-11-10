@@ -33,6 +33,7 @@ The main screen (home) is always the pitch display and piano. Everything else is
 - **Theory** — keys & key signatures, finding the key, chords: lessons and quizzes.
 - **Early music** — modes (lesson and quiz), tuning lab (pure intervals against a drone), old clefs.
 - **Tools** — held note (vibrato), drone, tuning check, record & replay.
+- **Chord synth** (below the sections) — an unofficial emulator of the HiChord pocket chord synthesizer, full-screen. Tap any button to turn it on; hold a chord button and drag the round stick to change the chord; **Help** has the rest. Upright, a big copy of its little screen sits above the device; turn the phone sideways for bigger buttons. **‹ Menu** and **Home** close it (its sound stops). The mic is off while it's open. Its recorded instruments (14 MB) download the first time you turn it on and are then kept for offline use.
 
 Exercises have **Easy / Medium / Hard** and use random keys (Settings → Practice can switch to your chosen key). The question stays on screen; arrows on the staff show higher/lower. Settings → Practice can also hide your pitch until after each note.
 
@@ -74,6 +75,7 @@ iPhone asks for microphone permission each time the app is opened; Home Screen w
 - `js/rhythm-core.js`, `js/rhythm-view.js`, `js/rhythm.js`: rhythm generator/scoring, rhythm notation drawing, rhythm exercises.
 - `js/partsing.js`, `data/chorales.json`: part-singing with 24 Bach chorales (`node tools/make-chorales.mjs <dir>` rebuilds them from the music21 corpus).
 - `js/warmup.js`, `js/early.js`: warm-ups and the early-music section.
+- `synth/`: the chord synth, copied unchanged from the separate Chord-Synth project by `node tools/sync-synth.mjs [path]` (build it there first). Don't edit it here. It runs as its own page in a full-screen frame (`openSynth` in `js/app.js`); its Menu/Home buttons post `{hichord: 'close'}` back.
 - `sw.js`: offline cache. **Change `VERSION` in `sw.js` whenever you publish an update**, or phones keep the old copy.
 - `manifest.webmanifest`, `icons/`: Home Screen name and icon.
 
@@ -93,5 +95,7 @@ Music symbols: `node tools/make-glyphs.mjs <Bravura.otf> <Bravura.json>` (from g
 ## Credits
 
 Piano: *Grand Piano, Steinway B* from the [Versilian Community Sample Library](https://github.com/sgossner/VCSL) (CC0 1.0), Versilian Studios LLC / Sam Gossner. Credit is a courtesy; CC0 requires none.
+
+Chord synth: unofficial, fan-made; HiChord is a product of Pocket Audio, not affiliated. Its samples are CC0 except the Retro EP: *Wurlitzer EP200 Electric Piano v1.1 (16 May 1999), © Greg Sullivan, CC BY 3.0, via sfzinstruments/GregSullivan.E-Pianos (mapping by kinwie); modified*. Full list: `synth/ATTRIBUTION.md` (also in the synth's Help).
 
 Music symbols: [Bravura](https://github.com/steinbergmedia/bravura) © Steinberg Media Technologies GmbH, SIL Open Font License 1.1 (`licenses/Bravura-OFL.txt`).

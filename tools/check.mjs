@@ -125,6 +125,44 @@ try {
   await page.screenshot({ path: path.join(out, 'phone-landscape.png') });
   const land = await page.evaluate(() => [document.scrollingElement.scrollHeight, innerHeight, document.getElementById('graph').clientHeight]);
   ok(land[0] <= land[1] && land[2] > 80, `landscape fits with a usable graph (graph ${land[2]} px tall)`);
+
+  // chord synth: opens full-screen from the menu, turns on and plays with taps, fits both ways, Menu comes back
+  await page.setViewportSize({ width: 393, height: 852 });
+  await page.waitForTimeout(300);
+  await page.locator('#practiceBtn').tap();
+  await page.waitForTimeout(450);
+  await page.locator('.menu-row', { hasText: 'Chord synth' }).tap();
+  await page.waitForFunction(() => window.__pp.synthOpen && document.querySelector('#synthLayer iframe'), null, { timeout: 5000 });
+  const sf = page.frameLocator('#synthLayer iframe');
+  await sf.locator('[data-key="1"]').waitFor({ timeout: 15000 });
+  const synth = page.frames().find((f) => f.url().includes('synth/index.html'));
+  await synth.waitForFunction(() => window.__hichord, null, { timeout: 15000 });
+  const appAudio = await page.evaluate(() => window.__pp.ctx.state);
+  await sf.locator('[data-key="1"]').tap(); // the first tap turns it on
+  await synth.waitForFunction(() => window.__hichord.fw.power, null, { timeout: 30000 });
+  await page.waitForTimeout(1800); // boot screen
+  await sf.locator('[data-key="5"]').tap();
+  await page.waitForTimeout(300);
+  const syn = await synth.evaluate(() => ({ chord: window.__hichord.fw.lastChord && window.__hichord.fw.lastChord.name, audio: window.__hichord.audio.ctx && window.__hichord.audio.ctx.state, cls: document.documentElement.className }));
+  ok(syn.chord === 'Gmaj' && syn.audio === 'running', `chord synth opens from the menu, turns on and plays with taps (${syn.chord}; synth audio ${syn.audio}; app audio ${appAudio} under it; ${syn.cls})`);
+  const fits = () => synth.evaluate(() => { const r = document.getElementById('device').getBoundingClientRect(); const m = document.getElementById('mirror').getBoundingClientRect(); return { ok: r.left >= 0 && r.top >= 0 && r.right <= innerWidth + 0.5 && r.bottom <= innerHeight + 0.5 && m.width > 150, w: Math.round(r.width), big: Math.round(m.width), scroll: document.scrollingElement.scrollHeight <= innerHeight }; });
+  const fp = await fits();
+  await page.screenshot({ path: path.join(out, 'phone-synth.png') });
+  const held = await synth.evaluate(() => { const ev = new Event('touchstart', { bubbles: true, cancelable: true }); document.querySelector('[data-key="3"]').dispatchEvent(ev); return ev.defaultPrevented; });
+  await page.setViewportSize({ width: 852, height: 393 });
+  await page.waitForTimeout(600);
+  const fl = await fits();
+  const side = await synth.evaluate(() => document.getElementById('mirror').parentElement.classList.contains('bar'));
+  await page.screenshot({ path: path.join(out, 'phone-synth-landscape.png') });
+  ok(fp.ok && fp.scroll && fl.ok && fl.scroll && side, `synth fits upright (device ${fp.w} px, big screen ${fp.big} px) and sideways (device ${fl.w} px, big screen in the side column: ${side})`);
+  ok(held, 'touches on the synth buttons are taken by it (stops the iOS magnifier while holding a chord)');
+  await sf.locator('#btnMenu').tap();
+  await page.waitForFunction(() => !window.__pp.synthOpen, null, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(300);
+  const back = await page.evaluate(() => ({ open: window.__pp.synthOpen, frames: document.querySelectorAll('#synthLayer iframe').length, sheet: document.getElementById('sheet').classList.contains('open') && document.getElementById('sheetTitle').textContent, audio: window.__pp.ctx.state }));
+  ok(!back.open && back.frames === 0 && back.sheet === 'Menu', `synth's ‹ Menu closes it (and its sound) and shows the menu (${JSON.stringify(back)})`);
+  await page.locator('#doneBtn').tap();
+  await page.waitForTimeout(300);
   ok(errors.length === 0, 'no errors in WebKit' + (errors.length ? ': ' + errors.join(' | ') : ''));
   await wk.close();
 

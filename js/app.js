@@ -19,7 +19,7 @@ import { EARLY } from './early.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 
-const VERSION = '1.8.0';
+const VERSION = '1.9.0';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -89,6 +89,7 @@ const recorder = new Recorder(ctx, piano.out);
 
 // iOS starts audio suspended until a tap; resume on any touch (also after phone calls or other interruptions)
 const wake = () => {
+  if (synthOpen) return; // the chord synth has its own sound; this app's stays paused under it
   if (ctx.state !== 'running') ctx.resume().catch(() => {});
   if (piano.route === 'stream' && piano.el && piano.el.paused) { const p = piano.el.play(); if (p && p.catch) p.catch(() => {}); }
 };
@@ -99,6 +100,7 @@ const tracker = new PitchTracker({ a4: S.a4, sensitivity: S.sensitivity, speed: 
 const hold = new NoteHold();
 const transcriber = new Transcriber({ minHold: 0.25, skip: 0.12 });
 let mic = null, listening = false, paused = false, starting = false;
+let synthOpen = false;       // the chord synth is covering the app (see openSynth)
 let micLevel = 0, micDb = -120;           // input level, for the ring on the mic button and the status panel
 let deadSince = null, micRestartAt = 0, micWarned = false; // watchdog: a live mic is never perfectly silent or frozen
 const lastSamples = new Float32Array(3);
@@ -247,7 +249,7 @@ document.addEventListener('visibilitychange', () => {
     if (listening) { micOffWhileAway = true; stopMic(); }
     return;
   }
-  if (ctx.state !== 'running') ctx.resume().catch(() => {});
+  if (ctx.state !== 'running' && !synthOpen) ctx.resume().catch(() => {});
   if (micOffWhileAway) { micOffWhileAway = false; showMsg('The mic turns off when you leave the app. Tap the mic to turn it back on.'); }
 });
 
@@ -382,6 +384,7 @@ let lastTs = performance.now(), lastDetect = 0, lastLoopError = '';
 // The next frame is requested first, so one bad frame can never stop the display for good.
 function loop(ts) {
   requestAnimationFrame(loop);
+  if (synthOpen) { lastTs = ts; return; } // the chord synth covers the screen
   try { frame(ts); } catch (e) {
     const msg = `${e && e.message} @ ${String(e && e.stack || '').split('\n')[1] || ''}`.replace(/https?:[^ )]*\//g, '');
     if (msg !== lastLoopError) { lastLoopError = msg; noteProblem('Display: ' + msg); console.error(e); }
@@ -838,9 +841,40 @@ function openMenu() {
     const g = el('div', 'group ex-list');
     body.appendChild(g);
     for (const m of MENU) menuRow(g, { title: m.title, blurb: m.blurb, tag: m.id === 'tools' && drone.on ? 'DRONE ON' : null, onClick: () => openSection(m.id) });
+    const g2 = el('div', 'group ex-list menu-extra');
+    body.appendChild(g2);
+    menuRow(g2, { title: 'Chord synth', blurb: 'An unofficial HiChord emulator: play chords, beats and loops.', onClick: openSynth });
     body.appendChild(el('p', 'muted hub-hint', 'Home (top right) goes back to the pitch display and piano.'));
   }, { close: 'Home' });
 }
+
+// ---------- chord synth: the HiChord emulator from the separate Chord-Synth project (synth/, see
+// tools/sync-synth.mjs). It runs as its own page with its own sound engine, full-screen over the app; its
+// Menu / Home buttons post a message back. While it's open the mic is off and this app's sound and drawing pause.
+function openSynth() {
+  closeSheet(); stopPractice();
+  if (starting) cancelMicStart(); else if (listening) stopMic();
+  synthOpen = true;
+  ctx.suspend().catch(() => {});
+  const f = document.createElement('iframe');
+  f.src = 'synth/index.html?embed=1';
+  f.title = 'Chord synth';
+  f.allow = 'microphone; autoplay';
+  $('synthLayer').replaceChildren(f);
+  $('synthLayer').hidden = false;
+}
+function closeSynth(to) {
+  if (!synthOpen) return;
+  synthOpen = false;
+  $('synthLayer').replaceChildren(); // removing its page stops its sound
+  $('synthLayer').hidden = true;
+  ctx.resume().catch(() => {});
+  if (to === 'menu') openMenu();
+  render();
+}
+window.addEventListener('message', (e) => {
+  if (e.origin === location.origin && e.data && e.data.hichord === 'close') closeSynth(e.data.to);
+});
 
 function openSection(id) {
   const m = menuSection(id);
@@ -1229,7 +1263,7 @@ requestAnimationFrame(loop);
 
 // handle for automated checks
 window.__pp = {
-  S, graph, staff, keyboard, piano, drone, recorder, tracker, ctx, VERSION,
+  S, graph, staff, keyboard, piano, drone, recorder, tracker, ctx, VERSION, openSynth, closeSynth, get synthOpen() { return synthOpen; },
   get listening() { return listening; }, get shown() { return shown; }, get range() { return range; },
   get practice() { return practice; }, get playing() { return playing; }, get mic() { return mic; }, get starting() { return starting; }, get take() { return recTake; }, get replaying() { return !!replay; },
   startMic, stopMic, startPractice, stopPractice, setDrone, toggleRecord, startReplay, stopReplay, openSettings, openMenu, openSection,

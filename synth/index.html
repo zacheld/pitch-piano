@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HiChord Emulator</title>
+<meta name="description" content="Unofficial HiChord pocket chord synthesizer emulator (firmware Rev 3.0 behavior).">
+<style>:root {
+  --bg: #0d0e11;
+  --bg2: #16181d;
+  --ink: #e8e9ec;
+  --ink2: #9aa0aa;
+  --accent: #f2c13d;
+  --panel: #1b1e24;
+  --line: #2b2f38;
+  --key-cream-1: #f4eedb;
+  --key-cream-2: #e3d9bb;
+  --key-side: #b9ac86;
+  --gray-1: #c9c5bd; --gray-2: #aaa59c; --gray-side: #807a70;
+  --yel-1: #f7cd4c; --yel-2: #e6aa22; --yel-side: #a87410;
+  --red-1: #ee4a42; --red-2: #cf2f2a; --red-side: #8e1714;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: radial-gradient(1200px 700px at 50% 42%, #24272e 0%, var(--bg) 70%); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; overflow: hidden; }
+button { font: inherit; color: inherit; }
+#app { height: 100%; display: flex; flex-direction: column; }
+
+/* ---------------------------------------------------------------- header */
+.bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px; gap: 12px; flex: none; }
+.brand { font-size: 15px; letter-spacing: 0.2px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand b { color: var(--ink); font-style: italic; font-weight: 900; font-size: 17px; margin-right: 4px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.pill { background: #22252c; border: 1px solid #343842; border-radius: 999px; padding: 6px 13px; font-size: 13px; cursor: pointer; color: var(--ink); }
+.pill:hover { background: #2a2e36; }
+.pill.on { background: #3a3220; border-color: #6b5520; color: #ffe08a; }
+
+/* ---------------------------------------------------------------- stage */
+.stage { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 0; padding: 0 16px 10px; gap: 12px; }
+.legend { color: var(--ink2); font-size: 12.5px; text-align: center; line-height: 1.6; max-width: 980px; flex: none; }
+.legend kbd { display: inline-block; min-width: 1.6em; padding: 0 5px; border: 1px solid #3b404b; border-bottom-width: 2px; border-radius: 4px; background: #1d2026; color: #e6e6e6; font: 600 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; margin: 0 1px; }
+.legend .sep { color: #4a4f5a; margin: 0 8px; }
+
+.mirror { flex: none; background: #020407; border-radius: 10px; padding: 10px; box-shadow: 0 0 0 1px #262a33, 0 10px 30px rgba(0,0,0,.45); display: none; }
+.mirror.on { display: block; }
+.mirror canvas { display: block; width: 384px; height: 192px; image-rendering: pixelated; }
+
+/* ---------------------------------------------------------------- device */
+.device { position: relative; font-size: 9px; width: 100em; flex: none; user-select: none; -webkit-user-select: none; touch-action: none; }
+.face { position: relative; width: 100em; height: 64em; border-radius: 4.2em; padding: 0; display: flex;
+  background: var(--body); box-shadow: inset 0 0.25em 0.3em rgba(255,255,255,.45), inset 0 -0.5em 0.9em rgba(0,0,0,.18), 0 0.5em 0 var(--body-side), 0 0.9em 0 var(--body-side2), 0 3em 5em rgba(0,0,0,.55); }
+.skin-silver { --body: linear-gradient(170deg, #f0f1f3 0%, #dfe1e4 45%, #cdd0d4 100%); --body-side: #a9adb3; --body-side2: #8d9197; --logo: #26272a; --well: #b3b6bb; --well-in: #141518; --print: #4a4d52; --edge: linear-gradient(180deg, #f6f7f8, #d5d7da); }
+.skin-black { --body: linear-gradient(170deg, #3d3f44 0%, #2d2f33 50%, #232427 100%); --body-side: #17181a; --body-side2: #0f1011; --logo: #121315; --well: #1c1d20; --well-in: #08090a; --print: #8a8d93; --edge: linear-gradient(180deg, #4a4c51, #2b2c30); }
+.skin-blue { --body: linear-gradient(170deg, #3a6cf0 0%, #2152d8 50%, #1a43b8 100%); --body-side: #12318a; --body-side2: #0c2366; --logo: #0b1f5c; --well: #183c9f; --well-in: #071437; --print: #c9d6ff; --edge: linear-gradient(180deg, #4b7af5, #2350cf); }
+.skin-standard { --body: linear-gradient(170deg, #f4f2ec 0%, #e9e6dd 50%, #dcd8cd 100%); --body-side: #b9b4a6; --body-side2: #9d9888; --logo: #2c2b28; --well: #cfcabd; --well-in: #3a362e; --print: #5e5a50; --edge: linear-gradient(180deg, #faf8f3, #e1ddd2); }
+
+/* top edge (seen from slightly above): power slider, volume wheel, out jack */
+.top-edge { height: 7.5em; perspective: 60em; margin: 0 0 -0.6em; position: relative; z-index: 2; }
+.edge-surface { position: absolute; left: 3em; right: 3em; bottom: 0; height: 6.2em; border-radius: 3em 3em 0.6em 0.6em; background: var(--edge);
+  transform: rotateX(48deg); transform-origin: 50% 100%; box-shadow: inset 0 -0.3em 0.5em rgba(0,0,0,.18), inset 0 0.2em 0.2em rgba(255,255,255,.35); display: flex; align-items: center; gap: 4.5em; padding-left: 11em; }
+.edge-ctl { display: flex; flex-direction: column; align-items: center; gap: 0.3em; cursor: pointer; }
+.edge-ctl span { font: 600 1.25em/1 "Helvetica Neue", Arial, sans-serif; color: var(--print); letter-spacing: 0.04em; }
+.power .slot { width: 6.6em; height: 2.4em; border-radius: 1.2em; background: #1b1c1f; position: relative; box-shadow: inset 0 0.2em 0.35em rgba(0,0,0,.8); }
+.power .slider { position: absolute; top: 0.3em; left: 0.35em; width: 2.6em; height: 1.8em; border-radius: 0.9em; background: linear-gradient(180deg, #ff6a5c, #d4291f); box-shadow: 0 0.15em 0.2em rgba(0,0,0,.5); transition: left .18s ease; }
+.device.on .power .slider { left: 3.65em; }
+.wheel .slot { width: 15em; height: 2.6em; border-radius: 0.7em; background: #141517; overflow: hidden; position: relative; box-shadow: inset 0 0.2em 0.4em rgba(0,0,0,.9); }
+.wheel .ridges { position: absolute; inset: 0.35em 0.4em; border-radius: 0.4em; background: repeating-linear-gradient(90deg, #3a3b3f 0 0.45em, #6c6e73 0.45em 0.62em, #2c2d30 0.62em 0.9em); box-shadow: inset 0 0.3em 0.4em rgba(255,255,255,.12), inset 0 -0.4em 0.4em rgba(0,0,0,.6); }
+.jack .hole { width: 2.6em; height: 2.6em; border-radius: 50%; background: radial-gradient(circle at 50% 50%, #050505 0 40%, #3c3d41 42% 60%, #8b8d91 62% 100%); position: relative; }
+.jack .plug { position: absolute; left: 50%; top: 50%; width: 1.8em; height: 1.8em; transform: translate(-50%, -50%); border-radius: 50%; background: radial-gradient(circle at 40% 35%, #555 0%, #1a1a1a 70%); display: none; box-shadow: 0 0 0 0.25em #222, 0 -1em 0 -0.35em #222; }
+.device.headphones .jack .plug { display: block; }
+
+/* left side */
+.left { position: relative; width: 36em; flex: none; }
+.logo { position: absolute; left: 6.6em; top: 5.4em; }
+.logo span { display: block; font: italic 900 4.6em/1 "Helvetica Neue", "Arial Black", Arial, sans-serif; color: var(--logo); letter-spacing: -0.035em; text-shadow: 0 0.04em 0 rgba(255,255,255,.18); }
+.grille { position: absolute; left: 6.3em; top: 13em; width: 22em; height: 22em; }
+.grille svg { width: 100%; height: 100%; display: block; }
+.grille circle { fill: #101113; }
+.skin-black .grille circle { fill: #050505; }
+.stick-area { position: absolute; left: 7.6em; top: 39.5em; width: 19.6em; height: 19.6em; }
+.ring { position: absolute; inset: 0; }
+.ring i { position: absolute; width: 0.75em; height: 0.75em; border-radius: 50%; background: var(--print); opacity: .8; transform: translate(-50%, -50%); }
+.ring i.lit { background: #ffd34d; opacity: 1; box-shadow: 0 0 0.6em #ffcf3f; }
+.ring i { cursor: pointer; }
+.ring i::before { content: ''; position: absolute; inset: -1.1em; border-radius: 50%; }
+.ring i.latched { background: #ff9b2f; box-shadow: 0 0 0 0.25em rgba(255,155,47,.35), 0 0 0.8em #ff9b2f; }
+.stick { position: absolute; left: 50%; top: 50%; width: 10.6em; height: 10.6em; margin: -5.3em 0 0 -5.3em; border-radius: 50%; cursor: grab; }
+.stick .cap { position: absolute; inset: 0; border-radius: 50%; background: radial-gradient(circle at 42% 34%, #fffbee 0%, #efe6cc 38%, #d7cba6 75%, #bfb08a 100%);
+  box-shadow: 0 0.55em 0 #a69873, 0 1em 1.4em rgba(0,0,0,.45), inset 0 -0.4em 0.6em rgba(120,100,60,.25); transition: transform .06s linear, box-shadow .06s linear; }
+.stick.pressed .cap { box-shadow: 0 0.15em 0 #a69873, 0 0.4em 0.8em rgba(0,0,0,.4), inset 0 0.4em 0.7em rgba(120,100,60,.35); }
+.stick:active { cursor: grabbing; }
+.mic-label { position: absolute; left: 17.4em; top: 59.6em; transform: translateX(-50%); }
+.mic-label span { display: block; font: 600 1.3em/1 "Helvetica Neue", Arial, sans-serif; color: var(--print); }
+.mic-label::before { content: ''; position: absolute; left: 50%; top: -0.9em; width: 0.5em; height: 0.5em; margin-left: -0.25em; border-radius: 50%; background: #111; }
+
+/* right side: key well */
+.right { position: relative; flex: 1; padding: 3.2em 3.4em 3.4em 0; }
+.well { position: relative; height: 100%; border-radius: 2.4em; background: var(--well); padding: 1.1em; box-shadow: inset 0 0.35em 0.5em rgba(0,0,0,.35), 0 0.12em 0 rgba(255,255,255,.3); display: grid; grid-template-rows: 13.4em 12.6em 1fr; gap: 0.9em; }
+.row-top { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9em; }
+.row-mid { display: grid; grid-template-columns: 1.5fr 1fr 1.5fr; gap: 0.9em; }
+.row-bot { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.9em; }
+.oled-window { border-radius: 1.3em; background: linear-gradient(160deg, #0b0c0f, #020304 60%, #0a0b0e); box-shadow: inset 0 0 0 0.25em #050506, inset 0 0.4em 0.8em rgba(255,255,255,.04); display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; }
+.oled-window::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(125deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,0) 40%); pointer-events: none; }
+#oled { width: 92%; aspect-ratio: 2 / 1; display: block; image-rendering: pixelated; }
+
+.fkey, .ckey { position: relative; border: 0; padding: 0; cursor: pointer; border-radius: 1.3em; outline: none; -webkit-tap-highlight-color: transparent; transition: transform .045s linear, box-shadow .045s linear; }
+.fkey svg { width: 50%; height: 50%; fill: none; stroke: #fff; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0.05em 0 rgba(0,0,0,.12)); }
+.f1 { background: linear-gradient(180deg, var(--gray-1), var(--gray-2)); box-shadow: 0 0.55em 0 var(--gray-side), 0 0.8em 1em rgba(0,0,0,.3), inset 0 0.18em 0 rgba(255,255,255,.4); }
+.f2 { background: linear-gradient(180deg, var(--yel-1), var(--yel-2)); box-shadow: 0 0.55em 0 var(--yel-side), 0 0.8em 1em rgba(0,0,0,.3), inset 0 0.18em 0 rgba(255,255,255,.45); }
+.f3 { background: linear-gradient(180deg, var(--red-1), var(--red-2)); box-shadow: 0 0.55em 0 var(--red-side), 0 0.8em 1em rgba(0,0,0,.3), inset 0 0.18em 0 rgba(255,255,255,.35); }
+.fkey.down { transform: translateY(0.45em); box-shadow: 0 0.1em 0 rgba(0,0,0,.35), inset 0 0.3em 0.5em rgba(0,0,0,.18); }
+
+.ckey { background: linear-gradient(180deg, var(--key-cream-1), var(--key-cream-2)); box-shadow: 0 0.6em 0 var(--key-side), 0 0.9em 1.1em rgba(0,0,0,.28), inset 0 0.2em 0 rgba(255,255,255,.7); }
+.ckey .cap { position: absolute; inset: 0.7em; border-radius: 0.8em; background: linear-gradient(180deg, rgba(255,255,255,.35), rgba(255,255,255,0) 60%); box-shadow: inset 0 -0.15em 0.2em rgba(150,130,80,.18); pointer-events: none; }
+.ckey.wide-l .cap { left: 33.3%; }
+.ckey.wide-r .cap { right: 33.3%; }
+.ckey.wide-l::before, .ckey.wide-r::before { content: ''; position: absolute; top: 0.7em; bottom: 0.7em; width: 0.12em; background: rgba(140,120,70,.25); pointer-events: none; }
+.ckey.wide-l::before { left: 33.3%; }
+.ckey.wide-r::before { right: 33.3%; }
+.ckey.down { transform: translateY(0.5em); box-shadow: 0 0.1em 0 var(--key-side), 0 0.25em 0.5em rgba(0,0,0,.25), inset 0 0.25em 0.4em rgba(120,100,60,.2); background: linear-gradient(180deg, #ece5cf, #d9cead); }
+.ckey.locked::after { content: ''; position: absolute; right: 0.9em; top: 0.9em; width: 0.8em; height: 0.8em; border-radius: 50%; background: #e9a321; box-shadow: 0 0 0.4em #e9a321; }
+
+/* keyboard labels printed on the keys */
+.kl { position: absolute; left: 0.9em; bottom: 0.7em; font: 700 1.5em/1 ui-monospace, SFMono-Regular, Menlo, monospace; font-style: normal; color: rgba(70,60,40,.55); pointer-events: none; display: none; }
+.fkey .kl { color: rgba(255,255,255,.85); }
+.show-labels .kl { display: block; }
+.stick-area .kl-stick { position: absolute; left: 50%; bottom: -1.4em; transform: translateX(-50%); font: 600 1.3em/1 ui-monospace, Menlo, monospace; color: var(--print); display: none; white-space: nowrap; }
+.show-labels .stick-area .kl-stick { display: block; }
+
+.usb { position: absolute; right: -0.55em; top: 34%; width: 1em; height: 6.5em; border-radius: 0.5em; background: #15161a; box-shadow: inset 0 0 0 0.25em #6d7076; }
+.power-hint { position: absolute; left: 0; right: 0; top: -2.8em; text-align: center; font-size: 1.6em; color: #ffd76a; text-shadow: 0 0 1em rgba(0,0,0,.6); pointer-events: none; transition: opacity .3s; }
+.device.on .power-hint { opacity: 0; }
+.device.drop .face { outline: 0.4em dashed #ffd34d; outline-offset: 0.6em; }
+
+/* ---------------------------------------------------------------- panels */
+.panel { position: fixed; right: 16px; top: 56px; width: 360px; max-width: calc(100vw - 32px); max-height: calc(100vh - 72px); overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 18px 50px rgba(0,0,0,.55); z-index: 20; }
+.panel.wide { width: 680px; }
+.panel[hidden] { display: none; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+.panel-head h2 { font-size: 15px; margin: 0; }
+.panel .x { background: none; border: 0; font-size: 22px; cursor: pointer; color: var(--ink2); }
+.panel-body { padding: 14px 16px 16px; font-size: 13.5px; line-height: 1.5; }
+.panel-body label { display: block; margin: 0 0 12px; color: var(--ink); }
+.panel-body select { display: block; margin-top: 4px; width: 100%; background: #12141a; color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 13px; }
+.panel-body .chk { display: flex; flex-wrap: wrap; column-gap: 8px; align-items: flex-start; }
+.panel-body .chk input { margin-top: 3px; }
+.panel-body .chk small { flex-basis: 100%; padding-left: 21px; line-height: 1.35; }
+.panel-body small { color: var(--ink2); }
+.panel-body .row { display: flex; gap: 8px; margin: 6px 0 12px; }
+.panel-body .note { color: var(--ink2); font-size: 12px; margin-top: 14px; }
+.panel-body h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); margin: 16px 0 6px; }
+.panel-body h3:first-child { margin-top: 0; }
+.panel-body table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.panel-body td { padding: 3px 6px; border-bottom: 1px solid #262a32; vertical-align: top; }
+.panel-body td:first-child { white-space: nowrap; color: #ffe6a0; width: 38%; }
+.panel-body kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; border: 1px solid #3b404b; border-bottom-width: 2px; border-radius: 4px; background: #13161b; font: 600 11.5px ui-monospace, Menlo, monospace; text-align: center; color: #eee; }
+
+@media (max-height: 640px) { .legend { display: none; } }
+
+/* ---------------------------------------------------------------- phones, touch screens, embedded */
+/* Classes on <html>: .touch (finger input), .phone (small touch screen), .embed (inside another app). */
+.lead { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pill { white-space: nowrap; }
+.pill.nav { display: none; }
+.embed .pill.nav { display: inline-block; }
+.rotate-hint { display: none; }
+.touch, .touch body { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.touch .panel-body { -webkit-user-select: text; user-select: text; }
+.touch #btnLabels, .touch .legend, .touch .kl, .touch .desk-only { display: none !important; }
+.no-midi .midi-only { display: none; }
+/* before power-on, the hint sits over the device in readable type */
+.touch .power-hint { top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); font-size: 15px; white-space: nowrap; background: rgba(10, 11, 14, .82); color: #ffd76a; padding: 9px 16px; border-radius: 999px; }
+.phone #btnMirror { display: none; }           /* the big screen is always on: the device's own is too small to read */
+.phone .mirror { padding: 8px; width: min(100%, 440px); }
+.phone .mirror canvas { width: 100%; height: auto; aspect-ratio: 2 / 1; }
+.phone .panel { right: 10px; left: 10px; top: 10px; width: auto; max-width: none; max-height: calc(100% - 20px); }
+.phone .panel.wide { width: auto; }
+
+/* upright phone: header, big screen, device, hint */
+@media (orientation: portrait) {
+  .phone .bar { padding: 8px 10px; gap: 8px; }
+  .phone .brand > span { display: none; }       /* "unofficial" is in Settings and Help */
+  .phone .actions { gap: 6px; flex-wrap: nowrap; }
+  .phone .mirror { width: min(100%, 340px); }
+  .phone .pill { padding: 6px 11px; }
+  .phone .stage { padding: 0 10px 10px; gap: 16px; }
+  .phone .rotate-hint { display: block; margin: 0; flex: none; color: var(--ink2); font-size: 13px; }
+}
+
+/* sideways phone: the device fills the height; buttons and big screen go in a column on the right */
+@media (orientation: landscape) {
+  .phone #app { flex-direction: row-reverse; }
+  .phone .bar { width: clamp(150px, 28vw, 230px); padding: 10px 10px 10px 0; display: grid; grid-template-columns: 1fr 1fr; align-content: start; gap: 8px; }
+  .phone .lead, .phone .actions { display: contents; }
+  .phone .pill { padding: 7px 6px; text-align: center; }
+  .phone #btnMenu { grid-column: 1; grid-row: 1; }
+  .phone #btnHome { grid-column: 2; grid-row: 1; }
+  .phone #btnHelp { grid-column: 1; grid-row: 2; }
+  .phone #btnSettings { grid-column: 2; grid-row: 2; }
+  .phone .bar .mirror { grid-column: 1 / span 2; grid-row: 3; width: 100%; margin-top: 4px; }
+  .phone .brand { grid-column: 1 / span 2; grid-row: 4; font-size: 12px; text-align: center; }
+  .phone .brand b { font-size: 13px; }
+  .phone .brand .long { display: none; }
+  .phone:not(.embed) #btnHelp { grid-row: 1; }
+  .phone:not(.embed) #btnSettings { grid-row: 1; }
+  .phone .stage { padding: 6px 0 6px 8px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="bar">
+    <div class="lead">
+      <button class="pill nav" id="btnMenu" title="Back to the menu">‹ Menu</button>
+      <div class="brand"><b>HiChord</b> <span><span class="long">emulator · Rev 3.0 · </span>unofficial</span></div>
+    </div>
+    <div class="actions">
+      <button class="pill" id="btnMirror" title="Big screen (M)">Big screen</button>
+      <button class="pill" id="btnLabels" title="Show keyboard keys on the buttons (K)">Key labels</button>
+      <button class="pill" id="btnHelp" title="Keyboard & controls (?)">Help</button>
+      <button class="pill" id="btnSettings" title="Emulator settings">Settings</button>
+      <button class="pill nav" id="btnHome" title="Back to the pitch display and piano">Home</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <div class="mirror" id="mirror"><canvas id="mirrorCanvas"></canvas></div>
+
+    <div class="device skin-silver" id="device">
+      <div class="top-edge">
+        <div class="edge-surface">
+          <div class="edge-ctl power" id="power" title="Power (click)"><div class="slot"><div class="slider"></div></div><span>pwr</span></div>
+          <div class="edge-ctl wheel" id="wheel" title="Volume wheel (scroll, drag, or - / =)"><div class="slot"><div class="ridges" id="ridges"></div></div><span>vol-ctrl</span></div>
+          <div class="edge-ctl jack" id="jack" title="Headphone jack — click to plug/unplug headphones"><div class="hole"><div class="plug"></div></div><span>out</span></div>
+        </div>
+      </div>
+      <div class="face">
+        <div class="left">
+          <div class="logo"><span>HiChord</span></div>
+          <div class="grille" id="grille"></div>
+          <div class="stick-area">
+            <div class="ring" id="ring"></div>
+            <div class="stick" id="stick"><div class="cap"></div></div>
+          </div>
+          <div class="mic-label"><span>mic</span></div>
+        </div>
+        <div class="right">
+          <div class="well">
+            <div class="row-top">
+              <div class="oled-window"><canvas id="oled"></canvas></div>
+              <button class="fkey f1" data-key="f1" aria-label="Key menu (gray)"><svg viewBox="0 0 24 24"><circle cx="8" cy="13" r="4.2"/><path d="M11.2 10.2 L19 3.6 M15.4 7 L17.6 9.4 M17.4 5.3 L19.4 7.4"/></svg><i class="kl"></i></button>
+              <button class="fkey f2" data-key="f2" aria-label="Sound menu (yellow)"><svg viewBox="0 0 24 24"><path d="M3.5 12.5 C 5.5 12.5 6.3 5 8.6 5 C 11 5 10.6 19 13.4 19 C 16 19 15.8 11.6 17.6 11.6 C 18.6 11.6 19.4 12.5 20.5 12.5"/></svg><i class="kl"></i></button>
+              <button class="fkey f3" data-key="f3" aria-label="Mode menu (red)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.6"/><path d="M12 7.6 V12.3 H15.4"/></svg><i class="kl"></i></button>
+            </div>
+            <div class="row-mid">
+              <button class="ckey k2 wide-l" data-key="2"><span class="cap"></span><i class="kl"></i></button>
+              <button class="ckey k4" data-key="4"><span class="cap"></span><i class="kl"></i></button>
+              <button class="ckey k6 wide-r" data-key="6"><span class="cap"></span><i class="kl"></i></button>
+            </div>
+            <div class="row-bot">
+              <button class="ckey tall k1" data-key="1"><span class="cap"></span><i class="kl"></i></button>
+              <button class="ckey tall k3" data-key="3"><span class="cap"></span><i class="kl"></i></button>
+              <button class="ckey tall k5" data-key="5"><span class="cap"></span><i class="kl"></i></button>
+              <button class="ckey tall k7" data-key="7"><span class="cap"></span><i class="kl"></i></button>
+            </div>
+          </div>
+        </div>
+        <div class="usb" title="USB-C"></div>
+      </div>
+      <div class="power-hint" id="powerHint">Click the <b>pwr</b> switch or press any key to turn on</div>
+    </div>
+
+    <div class="legend" id="legend"></div>
+    <p class="rotate-hint">Turn your phone sideways for bigger buttons.</p>
+  </main>
+
+  <aside class="panel" id="settingsPanel" hidden>
+    <div class="panel-head"><h2>Emulator settings</h2><button class="x" data-close>×</button></div>
+    <div class="panel-body">
+      <label>Finish <select id="optSkin"><option value="silver">Silver aluminum</option><option value="black">Jet black</option><option value="blue">Blue anodized</option><option value="standard">Standard (cream)</option></select></label>
+      <label>Screen color <select id="optTint"><option value="ice">Ice blue</option><option value="white">White</option><option value="amber">Amber</option><option value="green">Green</option></select></label>
+      <label class="chk"><input type="checkbox" id="optHeadphones" checked> Headphones plugged in <small>(off = hear the tiny built-in speaker)</small></label>
+      <label class="chk"><input type="checkbox" id="optLimits"> Authentic FX limits <small>(refuse effect combos the real chip can't run)</small></label>
+      <label class="chk"><input type="checkbox" id="optSleep" checked> Auto-sleep screen after 30 s</label>
+      <label class="chk"><input type="checkbox" id="optSlash" checked> Two-button slash chords <small>(hold one chord button, press another; turn off if overlapping keys trigger them by accident)</small></label>
+      <p class="note desk-only">Tip: drop an audio file onto the device to load it as the <b>User Samp</b> sound (like the Companion App's sample upload; root note C4).</p>
+      <label class="midi-only">MIDI output <select id="optMidiOut"><option value="">None</option></select></label>
+      <label class="midi-only">MIDI input <select id="optMidiIn"><option value="">None</option></select> <small>(also turn MIDI IN on in the yellow menu)</small></label>
+      <div class="row"><button class="pill" id="btnPanic">All notes off</button> <button class="pill" id="btnResetEmu">Reset emulator</button></div>
+      <p class="note">Unofficial fan-made emulator. HiChord is a product of Pocket Audio; this app is not affiliated with them. Recorded instruments use freely licensed samples — see README / ATTRIBUTION.</p>
+    </div>
+  </aside>
+
+  <aside class="panel wide" id="helpPanel" hidden>
+    <div class="panel-head"><h2>Controls</h2><button class="x" data-close>×</button></div>
+    <div class="panel-body" id="helpBody"></div>
+  </aside>
+</div>
+<script src="app/samples/manifest.js"></script>
+<script src="app/hichord.js"></script>
+</body>
+</html>
