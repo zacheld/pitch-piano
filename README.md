@@ -24,16 +24,18 @@ A personal singing app for iPhone: sing and see your pitch as a line over time, 
 
 The main screen (home) is always the pitch display and piano. Everything else is under **Menu**, in sections. Inside the menu, **‹ Menu** goes back to the list of sections and **Home** closes it. In an exercise, **‹ (section)** at the top left goes back to that part of the menu, and **Home** ends the exercise.
 
-- **Daily practice** — a guided 10, 20 or 30 minute session (warm-up → pitch memory → scale & return → sight-singing → rhythm → a quiz → cool-down) with a streak counter.
+- **Daily practice** — a guided 10, 20 or 30 minute session (warm-up → pitch memory → scale & return → sight-singing → rhythm → a quiz → cool-down) with a streak counter. The title shows the step and time left under it. **Next ›** shows how that step went (with a tip) before moving on, and the end of the session sums it all up: your average pitch offset and which way, higher vs lower notes, up vs down the scale, scoops, rhythm timing and note lengths, quiz scores, your trend over recent practice days, and a few tips.
 - **Warm-ups** — straw routine (Titze), and scales, arpeggios, octave slides and lip-trill patterns that move up your range a semitone at a time with the notes shown ahead; a cool-down.
 - **Sing** — sight-singing, intervals, echo, pitch memory (with distracting notes in between at medium/hard), scale & return.
 - **Ear training** — scale degrees, chords by ear, note naming.
 - **Part-singing** — sing one voice (tenor by default) of a Bach chorale while the piano plays the other three. The music scrolls past a play line as a score: all four parts as in a hymn book (soprano and alto on the treble staff, tenor and bass on the bass staff, words between), or just your part, larger, in your clef, or as bars on the pitch graph. Your part is white and each note turns green or orange as you sing it, with your pitch traced on your staff. Drag the music sideways to read ahead or look back; ▶ My part and ▶ All play it to you first.
-- **Rhythm** — learn to count (numbers or Takadimi), tap the rhythm (per-note early/late in ms), hear the rhythm, vowel on the beat (consonant timing), metronome.
-- **Theory** — keys & key signatures, finding the key, chords: lessons and quizzes.
+- **Rhythm** — learn to count (numbers or Takadimi), tap the rhythm, hear the rhythm, vowel on the beat (consonant timing), metronome. **Tap the rhythm**: Start always counts in one full bar at the rhythm's tempo (shown, e.g. ♩ = 72; in 6/8 and 7/8 the eighths tick softly inside the count-in beats). Press on each note and hold it for its length: it reports each press early/late (ms), notes cut short or held into a rest (a green or orange band along the line, with a tick where the note should end), missed notes and extra taps (lined up like comparing two texts, so one slip doesn't throw off the rest), and coming in early after rests. **Lengths: off** goes back to plain tapping.
+- **Theory** — keys & key signatures, finding the key, chords: lessons and quizzes. **Find the key** never ends its tunes on the home note: easy = signature shown, major or relative minor (find the raised 7th); medium = no signature, accidentals written in, four neighbouring keys; hard = two phrases, does it stay home or move to the dominant, subdominant or relative minor?
 - **Early music** — modes (lesson and quiz), tuning lab (pure intervals against a drone), old clefs.
 - **Tools** — held note (vibrato), drone, tuning check, record & replay.
 - **Chord synth** (below the sections) — an unofficial emulator of the HiChord pocket chord synthesizer, full-screen. Tap any button to turn it on; hold a chord button and drag the round stick to change the chord; **Help** has the rest. Upright, a big copy of its little screen sits above the device; turn the phone sideways for bigger buttons. **‹ Menu** and **Home** close it (its sound stops). The mic is off while it's open. Its recorded instruments (14 MB) download the first time you turn it on and are then kept for offline use.
+
+Leaving an exercise (‹ back or Home) shows **How it went** when there's enough to say: the numbers, plus tips chosen from them. The tips (`js/tips.js`) cite the studies they rest on, or say when they're studio tradition. A note you're holding is judged where it has settled (the last ~0.35 s), again and again while you hold it, so a steady ✓ always moves you on, even if you scooped into it.
 
 Exercises have **Easy / Medium / Hard** and use random keys (Settings → Practice can switch to your chosen key). The question stays on screen; arrows on the staff show higher/lower. Settings → Practice can also hide your pitch until after each note.
 
@@ -75,6 +77,7 @@ iPhone asks for microphone permission each time the app is opened; Home Screen w
 - `js/rhythm-core.js`, `js/rhythm-view.js`, `js/rhythm.js`: rhythm generator/scoring, rhythm notation drawing, rhythm exercises.
 - `js/partsing.js`, `data/chorales.json`: part-singing with 24 Bach chorales (`node tools/make-chorales.mjs <dir>` rebuilds them from the music21 corpus).
 - `js/warmup.js`, `js/early.js`: warm-ups and the early-music section.
+- `js/feedback.js`, `js/tips.js`: summaries after exercises and sessions, tips (with their sources), the trend across days (kept in this phone's storage only).
 - `synth/`: the chord synth, copied unchanged from the separate Chord-Synth project by `node tools/sync-synth.mjs [path]` (build it there first). Don't edit it here. It runs as its own page in a full-screen frame (`openSynth` in `js/app.js`); its Menu/Home buttons post `{hichord: 'close'}` back.
 - `sw.js`: offline cache. **Change `VERSION` in `sw.js` whenever you publish an update**, or phones keep the old copy.
 - `manifest.webmanifest`, `icons/`: Home Screen name and icon.

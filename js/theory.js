@@ -3,7 +3,7 @@
 // practice.js (see the env description there).
 
 import { Exercise } from './practice.js';
-import { KEYS, NO_KEY, keyById, spell, noteText, scaleOf, signatureLetters, LETTERS } from './notation.js';
+import { KEYS, NO_KEY, keyById, spell, noteText, scaleOf, signatureLetters, LETTERS, tonicPc } from './notation.js';
 import { generateMelody, chooseTonic, degreeMidi, makeRng } from './melody.js';
 
 const pick = (rng, arr) => arr[Math.floor(rng() * arr.length)];
@@ -82,6 +82,8 @@ const LESSONS = {
         key: Gm, items: items(minor, Gm), play: minor ? seqOf(minor.notes.map((n) => n.midi), 0.45) : null },
       { text: 'Step 4 — <b>check the chords</b>. With an accompaniment, the last chord is the home chord, usually right after V (the dominant): here V → I in B♭ major.',
         key: Bb, items: [{ notes: V, state: 'pending', label: 'V' }, { notes: I, state: 'good', label: 'I' }], play: chordSeq([V, I]) },
+      { text: 'Step 5 — <b>when the music moves</b>. An accidental that keeps coming back usually means a new key. In B♭ major: an <b>E♮</b> (the raised 4th, “fi”) means it has moved up to the dominant, F major; an <b>A♭</b> (the lowered 7th, “te”) points to the subdominant, E♭ major; an <b>F♯</b> (the raised 5th) is the leading note of the relative minor, G minor. The quiz’s hard level asks where a tune ends up.',
+        key: Bb, items: [] },
     ];
   },
   chords: (env) => {
@@ -169,46 +171,143 @@ class KeySignatureQuiz extends Exercise {
   button(id) { if (id === 'next') this.next(); }
 }
 
-class MajorOrMinorQuiz extends Exercise {
+// ---------- Find the key ----------
+// (Replaces "Major or minor?", whose tunes all ended on the home note, so the last note gave the answer away.)
+// The tunes here never end on their home note: you have to read the evidence.
+//  Easy: the key signature is shown; is it the major key or its relative minor? (find the raised 7th)
+//  Medium: no key signature: the accidentals are written in. Work out the signature, then major or minor,
+//          from four neighbouring keys.
+//  Hard: two phrases under the home key's signature. Does the second stay at home or move to the dominant,
+//        the subdominant or the relative minor? (spot the accidental that keeps coming back)
+const pcOf = (m) => ((m % 12) + 12) % 12;
+const relativeOf = (key) => (key.mode === 'major' ? relativeMinor(key) : relativeMajor(key));
+const sameModeShift = (key, df) => KEYS.find((k) => k.mode === key.mode && k.fifths === key.fifths + df);
+/** A phrase in `key` that stops somewhere other than its home note (a generated tune, cut before it gets
+ *  home) and contains every pitch class in `need` (the evidence the question relies on). */
+function phraseIn(env, key, { level, length, need = [] }) {
+  const { low, high } = env.range();
+  for (let tries = 0; tries < 120; tries++) {
+    const m = generateMelody({ key, level, length: length + 3, low, high, rng: env.rng });
+    if (!m) return null;
+    for (const cut of [1, 2, 3]) {
+      const notes = m.notes.slice(0, m.notes.length - cut).map((n) => n.midi);
+      if (pcOf(notes[notes.length - 1]) === pcOf(m.tonic)) continue;
+      const pcs = new Set(notes.map(pcOf));
+      if (need.every((pc) => pcs.has(pcOf(pc)))) return notes;
+    }
+  }
+  return null;
+}
+/** A note's name in `key`, with ♮ where the home signature would otherwise sharpen or flatten it (E♮ in B♭). */
+const nameIn = (midi, key, sig = key) => {
+  const n = spell(midi, key);
+  return noteText(n) + (n.a === 0 && sig && !sig.none && signatureLetters(sig).some((x) => x.l === n.l) ? '♮' : '');
+};
+
+class FindKeyQuiz extends Exercise {
   get needsMic() { return false; }
   start() { this.next(); }
   next() {
-    const r = this.env.range();
-    for (let tries = 0; tries < 50; tries++) {
-      const major = pick(this.env.rng, MAJORS.filter((k) => Math.abs(k.fifths) <= 4));
-      const minor = relativeMinor(major);
-      const isMinor = this.env.rng() < 0.5;
-      const key = isMinor ? minor : major;
-      const m = generateMelody({ key, level: isMinor ? 4 : 3, length: 7, low: r.low, high: r.high, rng: this.env.rng });
-      if (!m || (isMinor && !m.notes.some((n) => n.alter))) continue;
-      Object.assign(this, { major, minor, isMinor, key, notes: m.notes.map((n) => n.midi), answered: false });
-      this.env.staff.setExercise({ key: major, items: this.notes.map((x) => ({ midi: x, state: 'pending' })) });
-      this.ui.prompt('Same key signature, two possible keys. Which is this tune in? <span class="muted">Look at the last note and for a raised 7th.</span>');
-      this.ui.answers([{ value: 'major', label: major.name }, { value: 'minor', label: minor.name }], 2);
-      this.ui.buttons([{ id: 'hear', label: '▶ Hear it' }, { id: 'next', label: 'Skip' }]);
-      return;
-    }
+    for (let tries = 0; tries < 30; tries++) if (this.make()) return this.show(false);
     this.ui.prompt('Couldn’t make a tune in your range — widen it in Settings → Practice.');
+  }
+  make() {
+    const rng = this.env.rng, lv = this.level;
+    const major = pick(rng, MAJORS.filter((k) => Math.abs(k.fifths) <= (lv === 'easy' ? 4 : 5) && k !== this.lastMajor));
+    const Mpc = tonicPc(major);
+    if (lv === 'hard') {
+      const moves = [
+        { id: 'stay', key: major, cue: null, need: [Mpc + 5, Mpc + 11] },
+        { id: 'dom', key: sameModeShift(major, 1), cue: Mpc + 6, need: [Mpc + 6] },
+        { id: 'sub', key: sameModeShift(major, -1), cue: Mpc + 10, need: [Mpc + 10] },
+        { id: 'rel', key: relativeMinor(major), cue: Mpc + 8, need: [Mpc + 8] },
+      ].filter((x) => x.key);
+      if (moves.length < 4) return false;
+      const move = pick(rng, moves);
+      const a = phraseIn(this.env, major, { level: 3, length: 4 });
+      const b = phraseIn(this.env, move.key, { level: move.id === 'rel' ? 4 : 3, length: 5, need: move.need });
+      if (!a || !b) return false;
+      Object.assign(this, { kind: 'hard', home: major, move, moves, correct: move.id, phrases: [a, b], sig: major, answered: false, lastMajor: major });
+      this.options = moves.map((x) => ({ value: x.id, label: x.id === 'stay' ? `Stays in ${major.name}` : `Moves to ${x.key.name}` }));
+      return true;
+    }
+    const minor = relativeMinor(major);
+    const key = rng() < 0.5 ? minor : major;
+    // evidence: minor tunes show their raised 7th; with no signature, also the notes that fix the signature
+    // (fa and ti of the major scale: the ones that differ from the neighbouring keys)
+    const need = [];
+    if (key === minor) need.push(Mpc + 8);
+    if (lv === 'medium') need.push(Mpc + 5, Mpc + 11);
+    const notes = phraseIn(this.env, key, { level: key === minor ? 4 : 3, length: lv === 'easy' ? 7 : 8, need });
+    if (!notes) return false;
+    const opts = lv === 'easy' ? [major, minor] : shuffle(rng, [key, relativeOf(key), sameModeShift(key, 1), sameModeShift(key, -1)].filter(Boolean));
+    Object.assign(this, { kind: lv, key, major, minor, correct: key.id, phrases: [notes], sig: lv === 'easy' ? major : NO_KEY, answered: false, lastMajor: major });
+    this.options = opts.map((k) => ({ value: k.id, label: k.name }));
+    return true;
+  }
+  /** Staff items: the phrase(s), with a gap between two; after answering, the evidence is highlighted. */
+  items(reveal) {
+    const out = [];
+    this.phrases.forEach((p, i) => {
+      const spellKey = this.kind === 'hard' ? (i === 0 ? this.home : this.move.key) : this.key;
+      if (i > 0) out.push({ bar: true });
+      for (const m of p) {
+        const cue = reveal && this.isCue(m, i);
+        out.push({ midi: m, spell: spellKey, state: cue ? 'current' : 'pending', label: cue ? nameIn(m, spellKey, this.sig) : null });
+      }
+    });
+    return out;
+  }
+  /** The evidence: the new accidental (hard), the raised 7th (minor), and with no signature every sharp or flat. */
+  isCue(m, phrase) {
+    if (this.kind === 'hard') return phrase === 1 && this.move.cue != null && pcOf(m) === pcOf(this.move.cue);
+    if (this.key === this.minor && pcOf(m) === pcOf(tonicPc(this.major) + 8)) return true;
+    return this.kind === 'medium' && spell(m, this.key).a !== 0;
+  }
+  show(reveal) {
+    this.env.staff.setExercise({ key: this.kind === 'hard' ? this.home : this.key, sig: this.sig, carry: true, items: this.items(reveal) });
+    if (reveal) return;
+    const q = this.kind === 'hard' ? `It starts in ${this.home.name}. Where is it by the end of the second phrase?`
+      : this.kind === 'medium' ? 'No key signature — the accidentals are written in. Which key is it in?'
+        : 'Is this tune in the major key or its relative minor?';
+    this.ui.question(q);
+    this.ui.prompt('<span class="muted">It doesn’t end on its home note, so read the evidence.</span>');
+    this.ui.answers(this.options, 2);
+    this.ui.buttons([{ id: 'hear', label: '▶ Hear it' }, { id: 'next', label: 'Skip' }]);
   }
   answer(v) {
     if (this.answered) return;
     this.answered = true;
-    const ok = (v === 'minor') === this.isMinor;
+    const ok = v === this.correct;
     this.total++; if (ok) this.right++;
     this.score();
-    const last = noteText(spell(this.notes[this.notes.length - 1], this.key));
-    let why;
-    if (this.isMinor) {
-      const lt = this.notes.find((m) => ((m - (this.notes[this.notes.length - 1] - 1)) % 12 + 12) % 12 === 0);
-      why = `It ends on ${last}${lt != null ? ` and uses ${noteText(spell(lt, this.key))}, the raised 7th of ${this.minor.name}` : ''}: <b>${this.minor.name}</b>.`;
-    } else why = `It ends on ${last}, with no raised 7th: <b>${this.major.name}</b>.`;
-    this.env.staff.setExercise({ key: this.major, items: this.notes.map((x, i, a) => ({ midi: x, state: i === a.length - 1 ? (ok ? 'good' : 'off') : 'pending' })) });
-    this.ui.prompt(`${ok ? '✓' : '✗'} ${why}`);
+    this.show(true);
+    this.ui.prompt(`${ok ? '✓' : '✗'} ${this.why()}`);
     this.ui.answers(null);
     this.ui.buttons([{ id: 'hear', label: '▶ Hear it' }, { id: 'next', label: 'Next', primary: true }]);
   }
+  why() {
+    if (this.kind === 'hard') {
+      const h = this.home, k = this.move.key, cue = this.move.cue != null ? nameIn(this.phrases[1].find((m) => pcOf(m) === pcOf(this.move.cue)), k, h) : null;
+      if (this.move.id === 'stay') return `No new accidentals in the second phrase — fa and ti are still as in ${h.name}: it <b>stays in ${h.name}</b>.`;
+      if (this.move.id === 'dom') return `The second phrase brings in ${cue}: the raised 4th of ${h.name} (fi), the leading note of its dominant. It has moved to <b>${k.name}</b>.`;
+      if (this.move.id === 'sub') return `The second phrase brings in ${cue}: the lowered 7th of ${h.name} (te), which belongs to its subdominant. It has moved to <b>${k.name}</b>.`;
+      return `The second phrase brings in ${cue}: the raised 5th of ${h.name}, the leading note of its relative minor. It has moved to <b>${k.name}</b>.`;
+    }
+    const n = Math.abs(this.major.fifths), acc = this.major.fifths > 0 ? 'sharp' : 'flat';
+    const sig = this.major.fifths === 0 ? 'no sharps or flats' : `${n} ${acc}${n > 1 ? 's' : ''}`;
+    const sevenPc = pcOf(tonicPc(this.major) + 8);
+    const seven = nameIn(this.phrases[0].find((m) => pcOf(m) === sevenPc) ?? (60 + sevenPc), this.minor, this.major);
+    const mode = this.key === this.minor
+      ? `${seven} is the raised 7th of ${this.minor.name}, leaning up into its home note: <b>${this.minor.name}</b>.`
+      : `There’s no ${seven} (the raised 7th ${this.minor.name} would need): <b>${this.major.name}</b>.`;
+    if (this.kind === 'easy') return `The signature (${sig}) means ${this.major.name} or ${this.minor.name}. ${mode}`;
+    const letters = signatureLetters(this.major).map((x) => LETTERS[x.l] + (x.a > 0 ? '♯' : '♭'));
+    const which = letters.length ? `The ${this.major.fifths > 0 ? 'sharp' : 'flat'}${letters.length > 1 ? 's' : ''} (${letters.join(' ')}) give${letters.length > 1 ? '' : 's'} a signature of ${sig}` : 'No sharps or flats in the key';
+    return `${which}: ${this.major.name} or ${this.minor.name}. ${mode}`;
+  }
   button(id) {
-    if (id === 'hear') this.env.play(seqOf(this.notes, 0.45));
+    if (id === 'hear') this.env.play(this.phrases.flatMap((p) => { const q = seqOf(p, 0.42); q[q.length - 1].gap = 0.45; return q; }));
     if (id === 'next') this.next();
   }
 }
@@ -288,7 +387,9 @@ export const TOPICS = [
     quizzes: [{ id: 'quiz-keysig', title: 'Name the key', blurb: 'See a key signature, pick the major key.', make: (e) => new KeySignatureQuiz(e, {}) }] },
   { id: 'findkey', title: 'Finding the key', blurb: 'How to tell which key a piece is in: signature, ending, raised 7th.',
     lesson: { id: 'lesson-findkey', title: 'Finding the key', make: (e) => new Lesson(e, { lesson: 'findKey', quiz: 'quiz-majmin' }) },
-    quizzes: [{ id: 'quiz-majmin', title: 'Major or minor?', blurb: 'A tune and its key signature: is it the major key or its relative minor?', make: (e) => new MajorOrMinorQuiz(e, {}) }] },
+    quizzes: [{ id: 'quiz-majmin', title: 'Find the key', blurb: 'A tune that doesn’t end on its home note: which key is it in? Hard: where does it move to?', levels: true,
+      why: 'Easy: the key signature is shown; tell the major key from its relative minor by the raised 7th. Medium: no key signature, so work out the signature from the accidentals first (four neighbouring keys to choose from). Hard: does the second phrase stay at home or move to the dominant, the subdominant or the relative minor? None of the tunes end on their home note, so you have to read the evidence.',
+      make: (e, o) => new FindKeyQuiz(e, o) }] },
   { id: 'chords', title: 'Chords', blurb: 'Triads, major/minor/diminished/augmented, the chords of a key, cadences.',
     lesson: { id: 'lesson-chords', title: 'Chords', make: (e) => new Lesson(e, { lesson: 'chords', quiz: 'quiz-roman' }) },
     quizzes: [

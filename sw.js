@@ -6,14 +6,14 @@
 //   from the stored copy, kept across releases in their own store. When they change, give SYNTH_CACHE a
 //   new name (tools/sync-synth.mjs prints the fingerprint to use).
 // Each release gets a new VERSION; the old stored copy is removed once the new one is in place.
-const VERSION = 'pitch-piano-1.9.0';
+const VERSION = 'pitch-piano-1.10.0';
 const SYNTH_CACHE = 'pitch-piano-synth-b090f0a11fd2';
 const CORE = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
   'js/app.js', 'js/pitch.js', 'js/notes.js', 'js/graph.js', 'js/keyboard.js', 'js/piano-audio.js',
   'js/notation.js', 'js/glyphs.js', 'js/staff.js', 'js/melody.js', 'js/analysis.js', 'js/practice.js',
   'js/drone.js', 'js/recorder.js', 'js/rec-worklet.js', 'js/theory.js',
-  'js/rhythm-core.js', 'js/rhythm-view.js', 'js/rhythm.js', 'js/partsing.js', 'js/score-view.js', 'data/chorales.json', 'js/warmup.js', 'js/early.js',
+  'js/rhythm-core.js', 'js/rhythm-view.js', 'js/rhythm.js', 'js/partsing.js', 'js/score-view.js', 'data/chorales.json', 'js/warmup.js', 'js/early.js', 'js/feedback.js', 'js/tips.js',
   'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'icons/icon-v2-180.png', 'icons/icon-v2-192.png', 'icons/icon-v2-512.png',
   'icons/icon-v3-180.png', 'icons/icon-v3-192.png', 'icons/icon-v3-512.png',

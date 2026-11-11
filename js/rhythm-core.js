@@ -128,19 +128,92 @@ export function syllable(qInBar, r, system = 'numbers') {
 }
 
 /**
- * Match taps to expected onsets (both in seconds from the downbeat). Each onset takes the nearest
- * unused tap within `window`. Returns per-onset offsets in ms (null = missed) and the count of extra taps.
+ * Every sounding note (a tied note counts once): start and end in q and in seconds from the downbeat (swing
+ * applied), and what follows it ('note', 'rest' or 'end'). `afterRest`: the note comes straight after a rest.
  */
-export function scoreTaps(expected, taps, window = 0.25) {
-  const used = new Set();
-  const offsets = expected.map((t) => {
-    let best = -1, bestD = Infinity;
-    taps.forEach((x, i) => { const d = Math.abs(x - t); if (!used.has(i) && d < bestD && d <= window) { best = i; bestD = d; } });
-    if (best < 0) return null;
-    used.add(best);
-    return Math.round((taps[best] - t) * 1000);
+export function soundingNotes(r) {
+  const spq = 60 / r.tempo, tl = timeline(r), out = [];
+  tl.forEach((e, i) => {
+    if (!e.attack) return;
+    let j = i + 1, endQ = e.q + e.d;
+    while (j < tl.length && tl[j].tie && !tl[j].rest) { endQ = tl[j].q + tl[j].d; j++; }
+    const next = tl[j], prev = tl[i - 1];
+    out.push({ q: e.q, endQ, start: swung(e.q, r) * spq, end: swung(endQ, r) * spq,
+      before: !next ? 'end' : next.rest ? 'rest' : 'note', afterRest: !!(prev && prev.rest) });
   });
-  return { offsets, extra: taps.length - used.size };
+  return out;
+}
+
+/**
+ * Lines taps up with the written notes the way you'd compare two texts (dynamic programming): taps stay in
+ * order, each goes to at most one note, a note with no tap near it is missed and a tap near no note is extra.
+ * Unlike "nearest tap wins", one missing or extra tap can't shift the blame onto the notes around it.
+ * expected: onset times; taps: tap times (both seconds from the downbeat, sorted); window: furthest a tap
+ * may be from its note (one number, or one per note). Returns match (tap index per note, −1 = missed)
+ * and extras (tap indices).
+ */
+export function alignTaps(expected, taps, window = 0.3) {
+  const win = (i) => (Array.isArray(window) ? window[i] : window);
+  const n = expected.length, m = taps.length;
+  const cost = Array.from({ length: n + 1 }, () => new Float64Array(m + 1).fill(Infinity));
+  const how = Array.from({ length: n + 1 }, () => new Uint8Array(m + 1));
+  cost[0][0] = 0;
+  for (let i = 0; i <= n; i++) {
+    for (let j = 0; j <= m; j++) {
+      const c = cost[i][j];
+      if (c === Infinity) continue;
+      if (i < n && c + 1 < cost[i + 1][j]) { cost[i + 1][j] = c + 1; how[i + 1][j] = 1; }         // note i missed
+      if (j < m && c + 1 < cost[i][j + 1]) { cost[i][j + 1] = c + 1; how[i][j + 1] = 2; }         // tap j extra
+      if (i < n && j < m) {
+        const d = Math.abs(taps[j] - expected[i]), w = win(i);
+        const v = c + 0.9 * (d / w) ** 2;                                                          // < 2: a match beats miss + extra
+        if (d <= w && v < cost[i + 1][j + 1]) { cost[i + 1][j + 1] = v; how[i + 1][j + 1] = 3; }
+      }
+    }
+  }
+  const match = new Array(n).fill(-1), extras = [];
+  for (let i = n, j = m; i > 0 || j > 0;) {
+    const h = how[i][j];
+    if (h === 3) { match[i - 1] = j - 1; i--; j--; } else if (h === 1) i--; else { extras.push(j - 1); j--; }
+  }
+  return { match, extras: extras.reverse() };
+}
+
+/**
+ * Score a tapped rhythm. taps: [{ t, up }] (seconds from the downbeat; up = release, null if not known).
+ * tol: ms that counts as on time. holds: also judge how long notes are held.
+ * Lengths are judged where you'd hear them: a note before a rest or at the end should be released on time
+ * (within tolerance), and a note a beat or longer followed by another shouldn't be let go much before it ends.
+ * Short notes straight into the next note are just tapped.
+ */
+export function scoreTaps(r, taps, { tol = 70, holds = false } = {}) {
+  const notes = soundingNotes(r), spq = 60 / r.tempo;
+  const beatS = Math.min(...r.beats) * spq;
+  // how far a tap may be from its note: up to ~half a beat, but never past halfway to the next or previous
+  // note (in quick passages a tap that far out is a wrong or extra tap, not that note played very early)
+  const maxWin = Math.max(0.18, Math.min(0.35, 0.45 * Math.max(...r.beats) * spq));
+  const windows = notes.map((nt, i) => {
+    const gap = Math.min(i > 0 ? nt.start - notes[i - 1].start : Infinity, i < notes.length - 1 ? notes[i + 1].start - nt.start : Infinity);
+    return Math.max(0.08, Math.min(maxWin, gap / 2));
+  });
+  taps = [...taps].sort((a, b) => a.t - b.t);
+  const { match, extras } = alignTaps(notes.map((x) => x.start), taps.map((x) => x.t), windows);
+  const res = notes.map((nt, i) => {
+    const tap = match[i] >= 0 ? taps[match[i]] : null;
+    const out = { q: nt.q, endQ: nt.endQ, off: tap ? Math.round((tap.t - nt.start) * 1000) : null, hold: null, release: null, afterRest: nt.afterRest };
+    if (!tap || !holds || tap.up == null) return out;
+    out.upQ = tap.up / spq; out.downQ = tap.t / spq;
+    const len = nt.end - nt.start;
+    out.release = Math.round((tap.up - nt.end) * 1000);
+    if (nt.before === 'note') {
+      if (len >= 0.9 * beatS) out.hold = tap.up < nt.end - Math.max(0.15, 0.25 * len) ? 'short' : 'ok';
+    } else {
+      const slack = Math.max(1.6 * tol / 1000, 0.15 * len);
+      out.hold = tap.up < nt.end - slack ? 'short' : tap.up > nt.end + slack ? 'long' : 'ok';
+    }
+    return out;
+  });
+  return { notes: res, extras: extras.map((j) => ({ q: taps[j].t / spq })), offsets: res.map((x) => x.off) };
 }
 
 /** A different rhythm with the same meter, changed in one beat (for "which did you hear?" questions). */

@@ -7,7 +7,7 @@ import { GLYPHS, ENGRAVING } from './glyphs.js';
 import { drawRhythmView } from './rhythm-view.js';
 import { drawScoreView } from './score-view.js';
 import { CLEF_VIEWS, STAVES, spell, positionOn, ledgers, stavesFor, accidentalShown, signatureLetters,
-  continuousPosition, noteText, noteName, solfege } from './notation.js';
+  continuousPosition, noteText, noteName, solfege, keyAlterations } from './notation.js';
 
 const PATHS = {};
 const glyphPath = (name) => PATHS[name] || (PATHS[name] = new Path2D(GLYPHS[name].d));
@@ -92,6 +92,8 @@ export class StaffView {
   /** items: [{ midi, state, label, sung: [{ midi, cls }] }]; state: pending|current|good|near|off|hidden|given|piano */
   setExercise(ex) { this.exercise = ex; this.dirty = true; }
   get k() { return this.exercise && this.exercise.key !== undefined ? this.exercise.key : this.key; }
+  /** The key signature drawn: normally the key's own, but an exercise can show another one, or none (sig: null). */
+  get sigK() { const s = this.exercise && this.exercise.sig !== undefined ? this.exercise.sig : this.k; return s && !s.none ? s : null; }
   /** The clef view in use: a lesson card can ask for its own (e.g. the tenor C clef). */
   get v() { return (this.exercise && this.exercise.view) || this.view; }
 
@@ -102,7 +104,7 @@ export class StaffView {
     const avail = this.h - this.padTop - this.padBottom;
     const both = v.route === 'both';
     const rows = n === 1 ? 12.5 : both ? 23 : 21; // staff spaces needed top to bottom, with ledger room and labels
-    const sigN = this.k && !this.k.none ? Math.abs(this.k.fifths) : 0;
+    const sigN = this.sigK ? Math.abs(this.sigK.fifths) : 0;
     const across = 8 + sigN + (this.exercise ? Math.max(4, this.exercise.items.length) * 3 : 14);
     const sp = Math.max(7, Math.min(avail / rows, this.w / across, 22));
     const staffH = 4 * sp, gap = n === 1 ? 0 : (both ? 7.5 : 5.5) * sp;
@@ -156,8 +158,8 @@ export class StaffView {
     L.staves.forEach((s, i) => {
       const st = STAVES[s.id];
       this.glyph(st.glyph, L.clefX, this.yOf(L, i, st.glyphAt), sp, STAFF_COLORS.ink);
-      if (this.k && !this.k.none) {
-        signatureLetters(this.k).forEach((acc, j) => {
+      if (this.sigK) {
+        signatureLetters(this.sigK).forEach((acc, j) => {
           const p = (acc.a > 0 ? st.sig.sharp : st.sig.flat)[j];
           this.glyph(ACC_GLYPH[acc.a], L.sigX + j * sp * 1.05, this.yOf(L, i, p), sp, STAFF_COLORS.ink);
         });
@@ -171,8 +173,8 @@ export class StaffView {
   }
 
   /** One note at x on every staff it belongs to (two in the "both" view), with ledgers and accidental. */
-  note(L, x, midi, color, { hollow = false, label = null, accidentals = true } = {}) {
-    const n = spell(midi, this.k, this.flats);
+  note(L, x, midi, color, { hollow = false, label = null, accidentals = true, spellIn = null, acc: accOverride } = {}) {
+    const n = spell(midi, spellIn || this.k, this.flats);
     const idxs = stavesFor(this.v, midi);
     const ys = [];
     for (const i of idxs) {
@@ -186,7 +188,7 @@ export class StaffView {
         const yq = this.yOf(L, i, q);
         this.g.fillRect(x - ENGRAVING.ledgerExt * L.sp, yq - lt / 2, (NOTE_W + 2 * ENGRAVING.ledgerExt) * L.sp, lt);
       }
-      const acc = accidentals ? accidentalShown(n, this.k && !this.k.none ? this.k : null) : null;
+      const acc = accOverride !== undefined ? accOverride : accidentals ? accidentalShown(n, this.sigK) : null;
       if (acc !== null && acc !== undefined && ACC_GLYPH[acc]) {
         this.glyph(ACC_GLYPH[acc], x - (GLYPHS[ACC_GLYPH[acc]].w + 0.22) * L.sp, y, L.sp, color);
       }
@@ -271,8 +273,15 @@ export class StaffView {
     const room = this.w - L.contentX - sp * 1.2;
     const slot = Math.min(sp * 4.2, room / n);
     const x0 = L.contentX + Math.max(0, (room - slot * n) / 2) + (slot - NOTE_W * sp) / 2;
+    const carry = this.exercise.carry ? new Map() : null;
     items.forEach((it, i) => {
       const x = x0 + i * slot;
+      if (it.bar) { // a barline between phrases: accidentals start afresh after it
+        g.fillStyle = STAFF_COLORS.line;
+        for (const st of L.staves) g.fillRect(x + NOTE_W * sp / 2, st.top, Math.max(1, sp * 0.12), st.bottom - st.top);
+        if (carry) carry.clear();
+        return;
+      }
       if (it.state === 'current') {
         g.fillStyle = 'rgba(100,210,255,0.13)';
         g.fillRect(x - slot * 0.32, L.staves[0].top - sp * 2.5, NOTE_W * sp + slot * 0.64, L.staves[L.staves.length - 1].bottom - L.staves[0].top + sp * 5);
@@ -286,9 +295,16 @@ export class StaffView {
         const ms = it.notes ? [...it.notes].sort((a, b) => a - b) : [it.midi];
         let prevDia = null, shifted = false;
         for (const m of ms) { // a chord: stacked noteheads, with a 2nd nudged sideways
-          const dia = spell(m, this.k, this.flats).dia;
+          const n = spell(m, it.spell || this.k, this.flats), dia = n.dia;
           shifted = prevDia !== null && dia - prevDia === 1 && !shifted;
-          this.note(L, x + (shifted ? NOTE_W * sp * 0.95 : 0), m, color, { hollow: it.state === 'given' });
+          let acc;
+          if (carry) { // the line reads as one bar: an accidental holds until another one on that line or space
+            const sig = this.sigK ? keyAlterations(this.sigK)[n.l] : 0;
+            const inForce = carry.has(dia) ? carry.get(dia) : sig;
+            acc = n.a === inForce ? null : n.a;
+            carry.set(dia, n.a);
+          }
+          this.note(L, x + (shifted ? NOTE_W * sp * 0.95 : 0), m, color, { hollow: it.state === 'given', spellIn: it.spell || null, acc });
           prevDia = dia;
         }
       }

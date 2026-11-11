@@ -18,8 +18,9 @@ import { WARMUPS } from './warmup.js';
 import { EARLY } from './early.js';
 import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
+import { describe, tipsFor, historyEntry, dailyTrend } from './feedback.js';
 
-const VERSION = '1.9.0';
+const VERSION = '1.10.0';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -547,15 +548,20 @@ function stopSeq() {
   piano.releaseAll(new Set(keyboard.held.keys()));
 }
 
+/** The small line under the exercise title: plan step and time left, and the score. */
+function showSub() {
+  const on = !!($('exStep').textContent || $('exScore').textContent);
+  if ($('exSub').hidden === on) { $('exSub').hidden = !on; layoutExercise(); }
+}
 function layoutExercise() {
   graph.padTop = staff.padTop = practice ? $('exBar').offsetHeight : 0;
   graph.padBottom = staff.padBottom = practice ? $('exPanel').offsetHeight : 0;
   staff.dirty = true; graph.dirty = true;
 }
 const ui = {
-  title: (t) => setText($('exTitle'), t),
+  title: (t) => { setText($('exTitle'), t); layoutExercise(); },
   question: (html) => { if ($('exQuestion').innerHTML !== html) { $('exQuestion').innerHTML = html; layoutExercise(); } },
-  score: (t) => setText($('exScore'), t),
+  score: (t) => { setText($('exScore'), t); showSub(); },
   prompt: (html) => { if ($('exPrompt').innerHTML !== html) { $('exPrompt').innerHTML = html; layoutExercise(); } },
   buttons: (list) => {
     const box = $('exButtons');
@@ -586,6 +592,7 @@ const ui = {
 };
 const randomKey = () => KEYS[Math.floor(rng() * KEYS.length)];
 const env = {
+  log: (e) => { if (run) run.log.push(e); },
   key: () => (S.practiceKey === 'mine' ? practiceKey() : randomKey()),
   randomKey,
   range: practiceRange,
@@ -642,7 +649,7 @@ const env = {
   },
   graph,
   vtOf: (audioT) => vt + (audioT - ctx.currentTime),
-  pad: (show) => { $('tapPad').hidden = !show; layoutExercise(); },
+  pad: (show) => { $('tapPad').hidden = !show; if (!show) { padDown.clear(); $('tapPad').classList.remove('hit'); } layoutExercise(); },
   animate: (on) => { if (staff.exercise) staff.exercise.animate = on; staff.dirty = true; },
   syllables: () => S.counting,
   tapOffset: () => S.tapOffset || 0,
@@ -650,14 +657,27 @@ const env = {
   micLatency: () => S.micLatency,
   setMicLatency: (ms) => { S.micLatency = ms; save(); },
 };
-// The tap pad: the time of a touch, converted to the audio clock (touch is near-instant).
+// The tap pad: when a finger goes down and when it lifts, converted to the audio clock (touch is
+// near-instant), per finger. It stays lit while held. The touch itself is stopped so a long press never
+// brings up the iOS magnifier (the pad is a button, which the page-wide rule above leaves alone).
+const padTime = (e) => ctx.currentTime - Math.max(0, (performance.now() - e.timeStamp) / 1000);
+const padDown = new Set();
+$('tapPad').addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+$('tapPad').addEventListener('touchend', (e) => e.preventDefault(), { passive: false });
 $('tapPad').addEventListener('pointerdown', (e) => {
   e.preventDefault();
   wake();
-  const t = ctx.currentTime - Math.max(0, (performance.now() - e.timeStamp) / 1000);
-  if (practice && practice.tap) practice.tap(t);
-  $('tapPad').classList.add('hit'); setTimeout(() => $('tapPad').classList.remove('hit'), 90);
+  try { $('tapPad').setPointerCapture(e.pointerId); } catch (err) { /* already gone */ }
+  padDown.add(e.pointerId);
+  if (practice && practice.tap) practice.tap(padTime(e), e.pointerId);
+  $('tapPad').classList.add('hit');
 });
+const padUp = (e) => {
+  if (!padDown.delete(e.pointerId)) return;
+  if (practice && practice.release) practice.release(padTime(e), e.pointerId);
+  if (!padDown.size) $('tapPad').classList.remove('hit');
+};
+for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) $('tapPad').addEventListener(ev, padUp);
 
 let practiceFrom = null; // the menu section an exercise was started from (its ‹ back button returns there)
 function startPractice(id, { keepPlan = false, from } = {}) {
@@ -676,6 +696,7 @@ function startPractice(id, { keepPlan = false, from } = {}) {
   closeSheet();
   const opts = { level: (S.levels || {})[def.id || id] || def.defaultLevel || 'medium' };
   practiceDef = def;
+  run = { id: def.id || id, title: def.title, log: [] };
   practice = def.make(env, opts);
   $('graphWrap').classList.add('exercising'); $('app').classList.add('exercising');
   $('exBar').hidden = false; $('exPanel').hidden = false;
@@ -687,7 +708,7 @@ function startPractice(id, { keepPlan = false, from } = {}) {
   render();
 }
 function stopPractice() {
-  plan = null; $('exNext').hidden = true;
+  plan = null; $('exNext').hidden = true; setText($('exStep'), ''); showSub();
   if (!practice) return;
   practice.stop(); stopSeq(); piano.stopScheduled();
   graph.script = []; graph.lookahead = 0; graph.keyOverride = null;
@@ -700,8 +721,84 @@ function stopPractice() {
   setStageView(S.view);
   render();
 }
-$('exClose').addEventListener('click', () => { closeSheet(); stopPractice(); });
-$('exBack').addEventListener('click', () => { const from = practiceFrom; stopPractice(); if (from) openSection(from); else openMenu(); });
+$('exClose').addEventListener('click', () => { closeSheet(); leaveExercise(null); });
+$('exBack').addEventListener('click', () => { const from = practiceFrom; leaveExercise(() => (from ? openSection(from) : openMenu())); });
+
+// ---------- feedback: what an exercise logged (env.log), summarised when you leave it ----------
+let run = null; // the exercise run in progress: { id, title, log }
+const runNotes = (m) => noteName(spell(m, NO_KEY, S.flats));
+/** Ends the current run: kept in the history, and returned if there's enough in it to say something. */
+function endRun() {
+  if (!run || !practice) { run = null; return null; }
+  const r = { ...run, right: practice.right || 0, total: practice.total || 0 };
+  run = null;
+  const pitchN = r.log.filter((e) => e.kind === 'pitch').length;
+  if (pitchN < 4 && !r.log.some((e) => e.kind === 'rhythm') && r.total < 3) return null;
+  const hist = store.get('history', []);
+  hist.push(historyEntry(r.log, { day: today(), id: r.id }));
+  store.set('history', hist.slice(-300));
+  return r;
+}
+function leaveExercise(then) {
+  const done = endRun();
+  const planRuns = plan ? [...(plan.runs || []), done].filter(Boolean) : null;
+  stopPractice();
+  if (planRuns && planRuns.length) showSessionSummary(planRuns, { complete: false, then });
+  else if (done) showRunSummary(done, then);
+  else if (then) then();
+}
+function summaryInto(body, log, { right = 0, total = 0, tips = 3 } = {}) {
+  const box = el('div', 'summary');
+  for (const line of describe(log, { name: runNotes, right, total })) { const p = el('p'); p.innerHTML = line; box.appendChild(p); }
+  body.appendChild(box);
+  const list = tipsFor(log, tips);
+  if (!list.length) return;
+  body.appendChild(el('div', 'section-title', list.length > 1 ? 'Tips' : 'Tip'));
+  const g = el('div', 'group tips');
+  for (const t of list) { const p = el('p', 'tip'); p.innerHTML = t; g.appendChild(p); }
+  body.appendChild(g);
+}
+function showRunSummary(r, then) {
+  openSheet(`How it went: ${r.title}`, (body) => {
+    summaryInto(body, r.log, { right: r.right, total: r.total });
+    const b = el('button', 'start-ex', 'Done');
+    b.addEventListener('click', () => { closeSheet(); if (then) then(); });
+    body.appendChild(b);
+  }, { close: 'Home' });
+}
+/** After a daily session (or when leaving one part-way): overall numbers, the trend, each step, tips. */
+function showSessionSummary(runs, { complete, then }) {
+  const all = runs.flatMap((r) => r.log);
+  openSheet(complete ? 'Session complete' : 'Session so far', (body) => {
+    if (complete) {
+      const s = streak();
+      body.appendChild(el('p', 'ex-detail-p', `Nice work. That’s ${s.n} day${s.n === 1 ? '' : 's'} in a row (${s.total} in all). Short, regular sessions beat long, occasional ones.`));
+    }
+    body.appendChild(el('div', 'section-title', 'Overall'));
+    summaryInto(body, all, { tips: 0 });
+    const trend = dailyTrend(store.get('history', []));
+    if (trend) body.appendChild(el('p', 'ex-detail-p', trend));
+    body.appendChild(el('div', 'section-title', 'Step by step'));
+    const steps = el('div', 'summary steps');
+    for (const r of runs) {
+      // just the headline of each (the details were on that step's own summary)
+      const lines = describe(r.log, { name: runNotes, right: r.right, total: r.total }).filter((l) => l.startsWith('<b>'));
+      const p = el('p'); p.innerHTML = `<b>${r.title}</b><br>${lines.map((l) => l.replace(/<b>(Pitch|Rhythm|Score)<\/b>/, '$1')).join('<br>')}`;
+      steps.appendChild(p);
+    }
+    body.appendChild(steps);
+    const list = tipsFor(all, 3);
+    if (list.length) {
+      body.appendChild(el('div', 'section-title', 'Tips for next time'));
+      const g = el('div', 'group tips');
+      for (const t of list) { const p = el('p', 'tip'); p.innerHTML = t; g.appendChild(p); }
+      body.appendChild(g);
+    }
+    const b = el('button', 'start-ex', 'Done');
+    b.addEventListener('click', () => { closeSheet(); if (then) then(); });
+    body.appendChild(b);
+  }, { close: 'Home' });
+}
 $('practiceBtn').addEventListener('click', () => openMenu());
 
 // ---------- daily practice plan ----------
@@ -764,24 +861,38 @@ function runPlanStep() {
 function planTick() {
   if (!plan || !practiceDef) return;
   const left = Math.max(0, Math.round((plan.end - Date.now()) / 1000));
-  setText($('exTitle'), `${plan.i + 1}/${plan.steps.length} · ${left ? fmtTime(left) : 'time!'} · ${practiceDef.title}`);
+  setText($('exStep'), `Step ${plan.i + 1} of ${plan.steps.length} · ${left ? fmtTime(left) + ' left' : 'time’s up'}`);
+  showSub();
 }
 setInterval(planTick, 1000);
 $('exNext').addEventListener('click', () => {
   if (!plan) return;
+  const done = endRun();
+  if (done) (plan.runs = plan.runs || []).push(done);
   plan.i++;
-  if (plan.i < plan.steps.length) return runPlanStep();
+  const keep = plan; stopPractice(); plan = keep; // stop this step's sounds and mic prompts
+  if (plan.i < plan.steps.length) {
+    if (!done) return runPlanStep();
+    const nextTitle = defOf(plan.steps[plan.i].id).title;
+    openSheet(done.title, (body) => {
+      body.appendChild(el('p', 'ex-detail-p muted', `Step ${plan.i} of ${plan.steps.length} done.`));
+      summaryInto(body, done.log, { right: done.right, total: done.total, tips: 1 });
+      const b = el('button', 'start-ex', `Next: ${nextTitle} ›`);
+      b.addEventListener('click', () => { onSheetClose = null; closeSheet(); runPlanStep(); });
+      body.appendChild(b);
+    }, { close: 'End', onClose: () => { const runs = plan ? plan.runs || [] : []; plan = null; render(); if (runs.length) showSessionSummary(runs, { complete: false }); } });
+    return;
+  }
   const days = new Set(store.get('plan.days', [])); days.add(today()); store.set('plan.days', [...days]);
-  plan = null; stopPractice();
-  const s = streak();
-  openSheet('Session complete', (body) => {
-    body.appendChild(el('p', 'ex-detail-p', `Nice work. That’s ${s.n} day${s.n === 1 ? '' : 's'} in a row (${s.total} in all). Short, regular sessions beat long, occasional ones.`));
-    const b = el('button', 'start-ex', 'Done'); b.addEventListener('click', closeSheet); body.appendChild(b);
-  });
+  const runs = plan.runs || [];
+  plan = null;
+  showSessionSummary(runs, { complete: true });
 });
 
 // ---------- sheets (settings, practice, key) ----------
-function openSheet(title, build, { back = null, backLabel = 'Back', close = 'Done' } = {}) {
+let onSheetClose = null;
+function openSheet(title, build, { back = null, backLabel = 'Back', close = 'Done', onClose = null } = {}) {
+  onSheetClose = onClose;
   setText($('sheetTitle'), title);
   $('sheetBack').hidden = !back;
   $('sheetBack').onclick = back;
@@ -797,6 +908,8 @@ function openSheet(title, build, { back = null, backLabel = 'Back', close = 'Don
 function closeSheet() {
   $('sheet').classList.remove('open');
   $('sheet').setAttribute('aria-hidden', 'true');
+  const f = onSheetClose; onSheetClose = null;
+  if (f) f();
 }
 $('doneBtn').addEventListener('click', closeSheet);
 $('scrim').addEventListener('click', closeSheet);
@@ -913,7 +1026,7 @@ function openItemDetail(def, sectionId) {
     const go = el('button', 'start-ex', 'Start');
     go.addEventListener('click', () => startPractice(def.id, { from: sectionId }));
     body.appendChild(go);
-  }, { back: () => openSection(sectionId), backLabel: menuSection(sectionId).title, close: 'Home' });
+  }, { back: () => openSection(sectionId), backLabel: menuSection(sectionId).short || menuSection(sectionId).title, close: 'Home' });
 }
 
 let chorales = null;
@@ -944,7 +1057,7 @@ function openChoraleDetail(c) {
     const go = el('button', 'start-ex', 'Start');
     go.addEventListener('click', () => startPractice('chorale:' + c.id, { from: 'part' }));
     body.appendChild(go);
-  }, { back: () => openSection('part'), backLabel: 'Part-singing', close: 'Home' });
+  }, { back: () => openSection('part'), backLabel: 'Chorales', close: 'Home' });
 }
 
 function openTopicDetail(topic, sectionId) {
@@ -963,7 +1076,7 @@ function openTopicDetail(topic, sectionId) {
       box.appendChild(go);
       g.appendChild(box);
     }
-  }, { back: () => openSection(sectionId), backLabel: menuSection(sectionId).title, close: 'Home' });
+  }, { back: () => openSection(sectionId), backLabel: menuSection(sectionId).short || menuSection(sectionId).title, close: 'Home' });
 }
 
 function openDroneDetail() {

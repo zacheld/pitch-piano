@@ -27,6 +27,8 @@ export class Exercise {
     this.lastT = 0; this.stopped = false;
     this.right = 0; this.total = 0;
   }
+  /** Results for the feedback summary (the app keeps them for this run of the exercise). */
+  log(entry) { if (this.env.log) this.env.log(entry); }
   get needsMic() { return true; }
   get hearsItself() { return false; }
   frame(t, note, cents, line, centre) {
@@ -34,7 +36,29 @@ export class Exercise {
     this.lastT = t;
     this.live(note, cents, dt, line, centre, t);
     const ev = this.catcher.feed(t, note, cents);
-    if (ev && ev.type === 'write') this.held(ev.note, ev.cents, t);
+    if (!ev) return;
+    if (ev.type === 'write') this.judge(ev, ev.cents, t);
+    else if (this.expecting && ev.since !== this.usedUp) {
+      // The right note, held but not in tune when it was first judged: keep checking where it has
+      // settled (the last ~0.35 s) for as long as it's held, so a steady ✓ always moves you on.
+      const want = this.expecting();
+      if (want && want.midi === ev.note && Math.abs(ev.recent) <= this.tol) this.judge(ev, ev.recent, t);
+    }
+  }
+  /** Passes a sung note to held(); if that moved the exercise on, the note is used up (it can't also count
+   *  for the next target, e.g. a repeated note). */
+  judge(ev, cents, t) {
+    this.lastEv = ev;
+    const before = this.expecting ? this.expecting() : null;
+    this.held(ev.note, cents, t);
+    if (this.expecting && this.expecting() !== before) this.usedUp = ev.since;
+  }
+  /** Feedback: one sung note, judged against its target (cents = where it settled). Records the onset too,
+   *  so a scoop from below can be reported. */
+  logPitch(midi, cents, extra = {}) {
+    const ev = this.lastEv;
+    const scoop = ev && ev.early != null && ev.note === midi ? Math.round(cents - ev.early) : null; // > 0: started below
+    this.log({ kind: 'pitch', midi, cents: Math.round(cents), scoop, ...extra });
   }
   live() {}
   held() {}
@@ -81,6 +105,7 @@ class SightSinging extends Exercise {
     this.ui.buttons([{ id: 'do', label: 'Hear do' }, { id: 'melody', label: 'Hear melody' }, { id: 'skip', label: 'Skip note' }, { id: 'new', label: 'New melody' }]);
     this.keyIntro(key, m.tonic).then(() => { if (!this.done && !this.stopped && this.key === key) this.ui.prompt(''); });
   }
+  expecting() { return this.done ? null : this.notes[this.i]; }
   show() {
     this.env.staff.setExercise({ key: this.key, items: this.notes.map((n) => ({
       midi: n.midi, state: n.state, sung: n.sung, arrow: n.arrow,
@@ -101,8 +126,9 @@ class SightSinging extends Exercise {
     if (note === cur.midi && Math.abs(cents) <= this.tol) {
       cur.state = cls(cents, this.tol); cur.sung = []; cur.arrow = null;
       this.total++; if (cur.first) this.right++;
+      this.logPitch(cur.midi, cents, { first: cur.first });
       this.advance();
-    } else if (note !== cur.midi) cur.first = false;
+    } else if (note !== cur.midi) { cur.first = false; this.log({ kind: 'wrong' }); }
     this.score();
   }
   advance() {
@@ -139,7 +165,7 @@ class Intervals extends Exercise {
     const key = this.env.key();
     const s = spell(pick(this.env.rng, starts), key);
     const target = intervalFrom(s, iv, dir);
-    Object.assign(this, { key, iv, dir, start: s.midi, target: target.midi, done: false, first: true });
+    Object.assign(this, { key, iv, dir, start: s.midi, target: target.midi, goal: { midi: target.midi }, done: false, first: true });
     // hard: the start note is only heard, not shown
     this.items = this.level === 'hard' ? [{ midi: null, state: 'hidden' }, { midi: null, state: 'hidden', sung: [] }]
       : [{ midi: s.midi, state: 'given', label: this.env.name(s.midi, key) }, { midi: null, state: 'hidden', sung: [] }];
@@ -150,14 +176,16 @@ class Intervals extends Exercise {
     this.env.play([{ notes: [s.midi], dur: 1.0 }]);
   }
   show() { this.env.staff.setExercise({ key: this.key, items: this.items }); }
+  expecting() { return this.done ? null : this.goal; }
   held(note, cents) {
     if (this.done || note === this.start) return; // singing the start note first is fine
     if (note === this.target && Math.abs(cents) <= this.tol) {
       this.reveal(cls(cents, this.tol));
       this.total++; if (this.first) this.right++;
+      this.logPitch(this.target, cents, { first: this.first });
       this.ui.prompt(`✓ ${signed(cents)}`);
-    } else {
-      this.first = false;
+    } else if (note !== this.target) {
+      this.first = false; this.log({ kind: 'wrong' });
       const semis = note - this.start;
       this.items[1].sung = [{ midi: note, cls: 'off' }];
       this.show();
@@ -201,6 +229,7 @@ class Echo extends Exercise {
     this.playAll();
   }
   playAll() { return this.env.play(this.notes.map((n) => ({ notes: [n.midi], dur: 0.55, gap: 0.06 }))); }
+  expecting() { return this.done ? null : this.notes[this.i]; }
   show() {
     this.env.staff.setExercise({ key: this.key, items: this.notes.map((n) => ({
       midi: n.state === 'hidden' ? null : n.midi, state: n.state, sung: n.sung,
@@ -212,10 +241,11 @@ class Echo extends Exercise {
     const cur = this.notes[this.i];
     if (note === cur.midi && Math.abs(cents) <= this.tol) {
       cur.state = cls(cents, this.tol); cur.sung = [];
+      this.logPitch(cur.midi, cents);
       this.i++;
       if (this.i >= this.notes.length) return this.finish(true);
     } else if (note !== cur.midi) {
-      this.clean = false;
+      this.clean = false; this.log({ kind: 'wrong' });
       cur.sung = [{ midi: note, cls: 'off' }];
     }
     this.show();
@@ -242,7 +272,7 @@ class PitchMatch extends Exercise {
   next() {
     const { low, high } = this.env.range();
     const target = low + Math.floor(this.env.rng() * (high - low + 1));
-    Object.assign(this, { target, on: 0, done: false, first: true, ready: false, key: this.env.key(), token: {} });
+    Object.assign(this, { target, on: 0, sum: 0, n: 0, done: false, first: true, ready: false, key: this.env.key(), token: {} });
     const token = this.token;
     this.items = [{ midi: null, state: 'hidden', sung: [] }];
     this.show();
@@ -266,19 +296,22 @@ class PitchMatch extends Exercise {
   }
   show() { this.env.staff.setExercise({ key: this.key, items: this.items }); }
   live(note, cents, dt) {
-    if (this.done || !this.ready) { this.on = 0; return; }
+    if (this.done || !this.ready) { this.on = 0; this.sum = this.n = 0; return; }
     const a = Exercise.arrow(note, cents, this.target, this.tol);
+    // a second of ✓ in all, counting back down while it's off, so a moment's wobble doesn't start it over
     if (a === 'ok') {
-      this.on += dt;
-      if (this.on >= 1.0) return this.success(Math.round((note - this.target) * 100 + cents));
-    } else this.on = 0;
+      this.on += dt; this.sum += (note - this.target) * 100 + cents; this.n++;
+      if (this.on >= 1.0) return this.success(Math.round(this.sum / this.n));
+    } else this.on = Math.max(0, this.on - dt);
+    if (note == null && this.on === 0) { this.sum = this.n = 0; }
     const shown = this.env.hideLive() ? null : a;
     if (shown !== this.items[0].arrow) { this.items[0].arrow = shown; this.show(); }
   }
-  held(note) { if (this.ready && !this.done && note !== this.target) this.first = false; }
+  held(note) { if (this.ready && !this.done && note !== this.target) { this.first = false; this.log({ kind: 'wrong' }); } }
   success(cents) {
     this.done = true;
     this.total++; if (this.first) this.right++;
+    this.log({ kind: 'pitch', midi: this.target, cents, first: this.first });
     this.score();
     this.items = [{ midi: this.target, state: cls(cents, this.tol), label: this.env.name(this.target, this.key), sung: [] }];
     this.show();
@@ -318,6 +351,7 @@ class ScaleReturn extends Exercise {
   held(note, cents) {
     if (this.done || note !== this.seq[this.i]) return;
     this.results[this.i] = { cents, state: cls(cents, this.tol) };
+    this.logPitch(note, cents, { dir: this.i === 0 ? null : this.i < 8 ? 'up' : 'down' });
     this.i++;
     if (this.i >= this.seq.length) return this.finish(cents);
     this.show();

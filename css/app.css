@@ -98,9 +98,12 @@ svg { display: block; }
 /* during an exercise the bar above the stage (Graph/Staff, key, Menu) is hidden: ‹ back and Home are in the exercise bar */
 #app.exercising .subbar { display: none; }
 .ex-bar[hidden], .ex-panel[hidden] { display: none; }
-.ex-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 700; display: flex; gap: 8px; align-items: baseline; justify-content: center; }
-#exTitle { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ex-score { font-size: 13px; font-weight: 600; color: var(--good); font-variant-numeric: tabular-nums; }
+/* the title may take two lines (never cut off after a few letters); step, time left and score go on a small line under it */
+.ex-title { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
+#exTitle { max-width: 100%; font-size: 15px; font-weight: 700; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: break-word; }
+.ex-sub { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; font-size: 12.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+.ex-sub[hidden] { display: none; }
+.ex-score { color: var(--good); }
 .ex-panel { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; padding: 6px 10px 10px; background: linear-gradient(rgba(13,16,22,0), #0d1016 22%); }
 .ex-prompt { font-size: 15px; line-height: 1.35; text-align: center; padding: 6px 4px 8px; min-height: 22px; }
 .ex-prompt .muted, .muted { color: var(--muted); font-size: 13px; }
@@ -186,7 +189,8 @@ svg { display: block; }
 .sheet.open .scrim { opacity: 1; }
 .sheet.open .panel { transform: none; }
 .panel .head { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 16px 18px 10px; }
-.panel .head h2 { grid-column: 2; text-align: center; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel .head h2 { grid-column: 2; text-align: center; min-width: 0; max-width: min(calc(100vw - 210px), 440px); line-height: 1.2; overflow-wrap: break-word;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; } /* long names wrap onto a second line */
 .panel .head .done { grid-column: 3; justify-self: end; }
 .back { grid-column: 1; justify-self: start; border: 0; background: none; color: var(--accent); font-size: 17px; padding: 6px 2px; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .back[hidden] { display: none; }
@@ -286,7 +290,8 @@ svg { display: block; }
 .status-box { margin-top: 6px; font-size: 13px; line-height: 1.5; color: #c7cfdd; font-variant-numeric: tabular-nums; }
 .status-box .lvl { color: var(--good); letter-spacing: -1px; }
 .status-box .lvl span { color: #343b4c; }
-.tap-pad { display: block; width: 100%; height: 96px; margin: 0 0 8px; border: 0; border-radius: 18px; background: #23314c; color: #9fd8ff; font-size: 26px; font-weight: 800; letter-spacing: .1em; touch-action: none; }
+.tap-pad { display: block; width: 100%; height: 96px; margin: 0 0 8px; border: 0; border-radius: 18px; background: #23314c; color: #9fd8ff; font-size: 26px; font-weight: 800; letter-spacing: .1em; touch-action: none;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: background .05s; }
 .tap-pad[hidden] { display: none; }
 .tap-pad.hit { background: #2f4a72; }
 .ex-next { flex: none; border: 0; border-radius: 999px; padding: 7px 14px; background: var(--accent); color: #002433; font-weight: 700; font-size: 14px; }
@@ -300,3 +305,10 @@ svg { display: block; }
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .synth-layer[hidden] { display: none; }
 .synth-layer iframe { display: block; width: 100%; height: 100%; border: 0; background: #0d0e11; }
+
+/* ---------- feedback after an exercise or a session ---------- */
+.summary p { margin: 6px 6px 8px; font-size: 14px; line-height: 1.45; color: #c7cfdd; }
+.summary.steps p { margin: 0; padding: 10px 6px; border-top: 1px solid var(--line); }
+.summary.steps p:first-child { border-top: 0; }
+.tips .tip { margin: 0; padding: 11px 14px; font-size: 14px; line-height: 1.45; color: #d5dbe6; border-top: 1px solid var(--line); }
+.tips .tip:first-child { border-top: 0; }

@@ -87,6 +87,30 @@ function drawBar(g, w, y, sp, r, barIndex, view) {
     return right;
   };
   const stemH = sp * 3.4, nw = GLYPHS.noteheadBlack.w * sp;
+  // note lengths, drawn on the line behind the notes: while tapping, a band follows each held finger; after,
+  // each press-to-release is green (right length), orange (cut short or held into the rest) or grey (not
+  // checked: a quick note straight into the next), with a tick where a checked note should have ended
+  const band = (fromQ, toQ, color, alpha) => {
+    const a = Math.max(fromQ, startQ), b = Math.min(toQ, startQ + bq);
+    if (b <= a) return;
+    const xa = qToX(a - startQ) + (a === fromQ ? nw / 2 : 0), xb = qToX(b - startQ) + (b === toQ ? nw / 2 : 0);
+    g.globalAlpha = alpha; g.fillStyle = color; g.fillRect(xa, y - sp * 0.28, Math.max(2, xb - xa), sp * 0.56); g.globalAlpha = 1;
+  };
+  for (const h of view.holds || []) {
+    if (h.toQ == null) continue;
+    band(h.fromQ, h.toQ, h.cls === 'ok' ? C.good : h.cls ? C.off : C.label, h.cls ? 0.6 : 0.35);
+    if (h.cls && h.endQ > startQ + 1e-6 && h.endQ <= startQ + bq + 1e-6) {
+      const ex = qToX(h.endQ - startQ) + (h.endQ < startQ + bq - 1e-6 ? nw / 2 : -2);
+      g.fillStyle = C.label; g.fillRect(ex - 1, y - sp * 0.9, 2, sp * 1.8);
+    }
+  }
+  if (view.live) for (const h of view.live()) band(h.fromQ, h.toQ, C.head, 0.55);
+  for (const q of view.extras || []) { // taps that matched no note
+    if (q < startQ - 1e-6 || q >= startQ + bq) continue;
+    const ex = qToX(q - startQ) + nw / 2, ey = y - stemH - sp * 1.6, k = sp * 0.42;
+    g.strokeStyle = C.off; g.lineWidth = Math.max(1.5, sp * 0.18);
+    g.beginPath(); g.moveTo(ex - k, ey - k); g.lineTo(ex + k, ey + k); g.moveTo(ex + k, ey - k); g.lineTo(ex - k, ey + k); g.stroke();
+  }
   const stems = [];
   let attackIdx = view.attackStart || 0;
   tl.forEach((e, i) => {

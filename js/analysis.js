@@ -3,20 +3,34 @@
 /**
  * Notices when a note has been sung long enough to count: emits { type: 'write' } once per sung note
  * (after minHold seconds), then { type: 'update' } with the running average while it continues.
- * A breath (note = null) or a different note starts a new one.
+ * Every event also carries `recent` (the average of the last `recent` seconds: where the voice has
+ * settled) and `early` (the average of the first `skip` seconds: the onset, e.g. a scoop from below).
+ * A breath (note = null for longer than `gap` s) or a different note starts a new one; a dropout of a
+ * frame or two (the detector missing a beat mid-note) doesn't.
  */
 export class Transcriber {
   /** skip: seconds at the start of each note left out of the tuning average (the voice is still arriving). */
-  constructor({ minHold = 0.25, skip = 0 } = {}) { this.minHold = minHold; this.skip = skip; this.cur = null; }
+  constructor({ minHold = 0.25, skip = 0, recent = 0.35, gap = 0.05 } = {}) { Object.assign(this, { minHold, skip, recentWin: recent, gap }); this.cur = null; }
   reset() { this.cur = null; }
   feed(t, note, cents) {
-    if (note == null) { this.cur = null; return null; }
-    if (!this.cur || this.cur.note !== note) this.cur = { note, since: t, written: false, sum: 0, n: 0, esum: 0, en: 0 };
+    if (note == null) {
+      if (this.cur && this.cur.gapFrom == null) this.cur.gapFrom = t;
+      if (this.cur && t - this.cur.gapFrom > this.gap) this.cur = null;
+      return null;
+    }
+    if (this.cur && this.cur.note === note && this.cur.gapFrom != null && t - this.cur.gapFrom <= this.gap) this.cur.gapFrom = null;
+    if (!this.cur || this.cur.note !== note || this.cur.gapFrom != null) this.cur = { note, since: t, written: false, sum: 0, n: 0, esum: 0, en: 0, tail: [], gapFrom: null };
     const c = this.cur;
-    if (t - c.since < this.skip) { c.esum += cents; c.en++; } else { c.sum += cents; c.n++; }
+    if (t - c.since < this.skip) { c.esum += cents; c.en++; } else {
+      c.sum += cents; c.n++;
+      c.tail.push([t, cents]);
+      while (c.tail.length && c.tail[0][0] < t - this.recentWin) c.tail.shift();
+    }
     const avg = Math.round(c.n ? c.sum / c.n : c.esum / c.en);
-    if (!c.written && t - c.since >= this.minHold) { c.written = true; return { type: 'write', note, cents: avg, since: c.since }; }
-    return c.written ? { type: 'update', note, cents: avg, since: c.since } : null;
+    const recent = c.tail.length ? Math.round(c.tail.reduce((a, x) => a + x[1], 0) / c.tail.length) : avg;
+    const early = c.en ? Math.round(c.esum / c.en) : null;
+    if (!c.written && t - c.since >= this.minHold) { c.written = true; return { type: 'write', note, cents: avg, recent, early, since: c.since }; }
+    return c.written ? { type: 'update', note, cents: avg, recent, early, since: c.since } : null;
   }
 }
 

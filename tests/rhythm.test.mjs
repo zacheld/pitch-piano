@@ -1,7 +1,7 @@
 // Run: npm test
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { generateRhythm, barQ, timeline, onsets, clicks, syllable, scoreTaps, beatsOf, variant } from '../js/rhythm-core.js';
+import { generateRhythm, barQ, timeline, onsets, clicks, syllable, scoreTaps, alignTaps, soundingNotes, beatsOf, variant } from '../js/rhythm-core.js';
 import { makeRng } from '../js/melody.js';
 
 test('every generated bar adds up exactly to the time signature, at every level', () => {
@@ -43,10 +43,47 @@ test('counting syllables: numbers and takadimi', () => {
   assert.deepEqual([0, 0.5, 1].map((q) => syllable(q, six, 'takadimi')), ['ta', 'ki', 'da']);
 });
 
-test('tap scoring: offsets in ms, misses and extra taps', () => {
-  const s = scoreTaps([0, 0.5, 1, 1.5], [0.02, 0.47, 1.31, 1.52, 2.4]);
-  assert.deepEqual(s.offsets, [20, -30, null, 20]); // 1.31 is too far from 1.0 to count… but closer to nothing else
-  assert.equal(s.extra, 2);
+test('tap alignment: offsets, misses and extra taps', () => {
+  const a = alignTaps([0, 0.5, 1, 1.5], [0.02, 0.47, 1.31, 1.52, 2.4], 0.25);
+  assert.deepEqual(a.match, [0, 1, -1, 3]); // 1.31 is too far from 1.0 to count
+  assert.deepEqual(a.extras, [2, 4]);
+});
+
+test('tap alignment: a missed first sixteenth doesn’t shift the blame onto the notes after it', () => {
+  // "nearest tap wins" gave note 1 the tap meant for note 2, and so on down the line
+  const a = alignTaps([0, 0.227, 0.455, 0.682], [0.23, 0.46, 0.68], 0.3);
+  assert.deepEqual(a.match, [-1, 0, 1, 2]);
+  assert.deepEqual(a.extras, []);
+});
+
+test('tap alignment: an extra tap between two good ones is called extra', () => {
+  const a = alignTaps([0, 0.5, 1], [0, 0.25, 0.5, 1], 0.3);
+  assert.deepEqual(a.match, [0, 2, 3]);
+  assert.deepEqual(a.extras, [1]);
+});
+
+const E = (d, x = {}) => ({ d, rest: false, tie: false, trip: false, ...x });
+test('tap scoring: in quick notes, an extra tap plus a missed note are reported as such, not as wild offsets', () => {
+  // 7/8 at ♪ = 132: eighths 0.227 s apart. Taps: note 1, an extra between 1 and 2, note 2, (note 3 missed), note 4…
+  const r = { num: 7, den: 8, beats: [1, 1, 1.5], bars: [[E(0.5), E(0.5), E(0.5), E(0.5), E(0.5), E(0.5), E(0.5)]], swing: false, tempo: 66 };
+  const on = soundingNotes(r).map((x) => x.start);
+  const taps = [on[0], (on[0] + on[1]) / 2 + 0.02, on[1], ...on.slice(3)].map((t) => ({ t, up: null }));
+  const s = scoreTaps(r, taps, { tol: 55 });
+  assert.deepEqual(s.offsets.map((o) => (o == null ? null : Math.round(o))), [0, 0, null, 0, 0, 0, 0]);
+  assert.equal(s.extras.length, 1);
+});
+test('note lengths: released on the rest, cut short, held too long; ties count as one note', () => {
+  const r = { num: 4, den: 4, beats: [1, 1, 1, 1], bars: [[E(2), E(1, { rest: true }), E(1)]], swing: false, tempo: 60 };
+  const notes = soundingNotes(r);
+  assert.deepEqual(notes.map((x) => [x.start, x.end, x.before, x.afterRest]), [[0, 2, 'rest', false], [3, 4, 'end', true]]);
+  const ok = scoreTaps(r, [{ t: 0.01, up: 1.95 }, { t: 3.0, up: 3.3 }], { tol: 70, holds: true });
+  assert.deepEqual(ok.notes.map((x) => [x.off, x.hold]), [[10, 'ok'], [0, 'short']]);
+  const long = scoreTaps(r, [{ t: 0, up: 2.4 }, { t: 3.02, up: 4.0 }], { tol: 70, holds: true });
+  assert.deepEqual(long.notes.map((x) => x.hold), ['long', 'ok']);
+  const plain = scoreTaps(r, [{ t: 0, up: 0.1 }, { t: 3, up: 3.1 }], { tol: 70 });
+  assert.deepEqual(plain.notes.map((x) => x.hold), [null, null]); // lengths only when asked
+  const tied = { num: 2, den: 4, beats: [1, 1], bars: [[E(1), E(1, { tie: true })]], swing: false, tempo: 60 };
+  assert.deepEqual(soundingNotes(tied).map((x) => [x.start, x.end, x.before]), [[0, 2, 'end']]);
 });
 
 test('a variant differs from the original but keeps the meter', () => {

@@ -5,18 +5,43 @@
 //   env.tapOffset()/setTapOffset(ms) · env.micLatency()/setMicLatency(ms)
 
 import { Exercise, sleep } from './practice.js';
-import { generateRhythm, barQ, onsets, clicks, scoreTaps, variant, beatsOf } from './rhythm-core.js';
+import { generateRhythm, barQ, onsets, clicks, scoreTaps, variant, beatsOf, syllable } from './rhythm-core.js';
 
 const TOL = { easy: 90, medium: 70, hard: 55 };
 const shuffle = (rng, a) => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 
-/** Schedules a count-in bar, then the rhythm (woodblock) and/or clicks. Returns the downbeat time of bar 1. */
+/** The tempo as musicians write it: per dotted quarter in 6/8, per eighth in 7/8 and 5/8, else per quarter. */
+export function tempoLabel(r) {
+  if (r.beats.every((b) => Math.abs(b - 1.5) < 1e-6)) return `♩. = ${Math.round(r.tempo / 1.5)}`;
+  if (r.den === 8) return `♪ = ${Math.round(r.tempo * 2)}`;
+  return `♩ = ${r.tempo}`;
+}
+/** What the count-in is: always exactly one bar, one click per beat (eighths tick softly inside 8-time beats). */
+export function countInText(r) {
+  const n = r.beats.length;
+  if (r.den === 8) {
+    const groups = r.beats.map((b) => Math.round(b * 2)).join('+');
+    return `one bar: ${n} beat${n > 1 ? 's' : ''} (${groups} eighths), with the eighths ticking softly`;
+  }
+  return `one bar: ${Array.from({ length: n }, (_, i) => i + 1).join(' ')}`;
+}
+
+/** Schedules a count-in bar, then the rhythm (woodblock) and/or clicks. Returns the downbeat time of bar 1.
+ *  The count-in is always one whole bar at the rhythm's own tempo, one click per beat (accent on 1); in
+ *  8-time the eighths inside each beat tick softly too, so you feel the pulse you'll be counting. */
 function schedule(env, r, { rhythm = true, metronome = true, countIn = true } = {}) {
   const spq = 60 / r.tempo, bar = barQ(r) * spq;
   const start = env.now() + 0.25;
   const t0 = start + (countIn ? bar : 0);
-  if (countIn) { let q = 0; r.beats.forEach((L, i) => { env.click(start + q * spq, i === 0); q += L; }); }
+  if (countIn) {
+    let q = 0;
+    r.beats.forEach((L, i) => {
+      env.click(start + q * spq, i === 0);
+      if (r.den === 8) for (let e = 0.5; e < L - 1e-6; e += 0.5) env.click(start + (q + e) * spq, false, true);
+      q += L;
+    });
+  }
   if (metronome) for (const c of clicks(r)) env.click(t0 + c.t, c.accent);
   if (rhythm) for (const t of onsets(r)) env.wood(t0 + t);
   return t0;
@@ -24,18 +49,31 @@ function schedule(env, r, { rhythm = true, metronome = true, countIn = true } = 
 
 class TapRhythm extends Exercise {
   get needsMic() { return false; }
-  start() { this.next(); }
+  start() { this.cfg = this.env.load('tap', { holds: true }); this.next(); }
   next() {
     this.r = generateRhythm({ level: this.level, bars: 2, rng: this.env.rng });
-    Object.assign(this, { results: null, state: 'ready', t0: null, taps: [] });
+    Object.assign(this, { results: null, scored: null, state: 'ready', t0: null, taps: [] });
     this.show();
-    this.ui.question(`Tap the rhythm (${this.r.num}/${this.r.den}).`);
-    this.ui.prompt('Start gives one bar of clicks, then tap each note on the pad. Counting out loud helps.');
-    this.ui.buttons([{ id: 'hear', label: '▶ Hear it' }, { id: 'go', label: 'Start', primary: true }, { id: 'new', label: 'New rhythm' }]);
+    this.ui.question(`Tap the rhythm (${this.r.num}/${this.r.den}, ${tempoLabel(this.r)}).`);
+    this.readyPrompt();
+    this.readyButtons();
     this.env.pad(false);
   }
+  readyPrompt() {
+    this.ui.prompt(`Start counts you in with ${countInText(this.r)}, then tap on the pad. `
+      + (this.cfg.holds ? 'Press on each note and <b>hold it for its full length</b>; lift when it ends (on the rest, or as the next note comes).' : 'Tap each note.')
+      + ' <span class="muted">Counting out loud helps.</span>');
+  }
+  readyButtons(after = false) {
+    this.ui.buttons([{ id: 'hear', label: '▶ Hear it' }, { id: 'go', label: after ? 'Try again' : 'Start', primary: !after },
+      { id: 'new', label: after ? 'Next' : 'New rhythm', primary: after }, { id: 'holds', label: `Lengths: ${this.cfg.holds ? 'on' : 'off'}` }]);
+  }
   show() {
+    const sc = this.scored, spq = 60 / this.r.tempo;
     this.env.staff.setExercise({ rhythm: this.r, syllables: this.env.syllables(), results: this.results, tol: TOL[this.level],
+      holds: sc && this.cfg.holds ? sc.notes.filter((x) => x.downQ != null).map((x) => ({ fromQ: x.downQ, toQ: x.upQ, endQ: x.endQ, cls: x.hold })) : null,
+      extras: sc ? sc.extras.map((x) => x.q) : null,
+      live: this.state === 'tapping' && this.cfg.holds ? () => this.taps.filter((x) => x.up == null).map((x) => ({ fromQ: x.t / spq, toQ: (this.env.now() - this.t0) / spq })) : null,
       playhead: () => this.qNow(), animate: this.state === 'tapping' || this.state === 'hearing' });
   }
   qNow() {
@@ -51,38 +89,82 @@ class TapRhythm extends Exercise {
     setTimeout(() => { if (this.state === 'hearing') { this.state = 'ready'; this.env.animate(false); this.show(); } }, end);
   }
   go() {
-    this.state = 'tapping'; this.taps = []; this.results = null;
+    this.state = 'tapping'; this.taps = []; this.results = null; this.scored = null;
     this.t0 = schedule(this.env, this.r, { rhythm: false });
     this.env.pad(true); this.env.animate(true); this.show();
-    this.ui.prompt('Tap each note…');
     this.ui.buttons([]);
-    const dur = this.r.bars.length * barQ(this.r) * 60 / this.r.tempo;
-    clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.finish(), (this.t0 + dur + 0.6 - this.env.now()) * 1000);
+    // count the bar in on screen too, beat by beat, then "Go"
+    const spq = 60 / this.r.tempo, start = this.t0 - barQ(this.r) * spq, n = this.r.beats.length;
+    clearTimeout(this.timer); for (const x of this.countTimers || []) clearTimeout(x);
+    this.countTimers = [];
+    let q = 0;
+    this.r.beats.forEach((L, i) => {
+      const at = start + q * spq; q += L;
+      this.countTimers.push(setTimeout(() => { if (this.state === 'tapping') this.ui.prompt(`Count-in (${tempoLabel(this.r)}): ` + Array.from({ length: n }, (_, k) => (k === i ? `<b>${k + 1}</b>` : `<span class="muted">${k + 1}</span>`)).join(' ')); }, Math.max(0, (at - this.env.now()) * 1000)));
+    });
+    this.countTimers.push(setTimeout(() => { if (this.state === 'tapping') this.ui.prompt(this.cfg.holds ? 'Go — press and hold each note…' : 'Go — tap each note…'); }, Math.max(0, (this.t0 - 0.05 - this.env.now()) * 1000)));
+    this.end = this.t0 + this.r.bars.length * barQ(this.r) * spq;
+    this.timer = setTimeout(() => this.finish(), (this.end + 0.6 - this.env.now()) * 1000);
   }
-  tap(t) { if (this.state === 'tapping') this.taps.push(t - this.t0 - this.env.tapOffset() / 1000); }
+  /** Taps arrive as presses and releases (finger id), in audio-clock seconds. */
+  tap(t, id = 0) { if (this.state === 'tapping') this.taps.push({ t: t - this.t0 - this.env.tapOffset() / 1000, up: null, id }); }
+  release(t, id = 0) {
+    if (this.state !== 'tapping') return;
+    const tp = [...this.taps].reverse().find((x) => x.id === id && x.up == null);
+    if (tp) tp.up = Math.max(tp.t, t - this.t0 - this.env.tapOffset() / 1000);
+  }
   finish() {
     if (this.state !== 'tapping') return;
+    // a finger still holding the last note: wait (a little) for it to lift
+    if (this.cfg.holds && this.taps.some((x) => x.up == null) && this.env.now() < this.end + 1.5) { this.timer = setTimeout(() => this.finish(), 100); return; }
     this.state = 'done'; this.env.pad(false); this.env.animate(false);
-    const { offsets, extra } = scoreTaps(onsets(this.r), this.taps);
-    this.results = offsets;
     const tol = TOL[this.level];
-    const hit = offsets.filter((o) => o != null);
-    const onTime = hit.filter((o) => Math.abs(o) <= tol).length;
-    this.total++; if (onTime === offsets.length && !extra) this.right++;
+    const sc = scoreTaps(this.r, this.taps, { tol, holds: this.cfg.holds });
+    this.scored = sc; this.results = sc.offsets;
+    const notes = sc.notes, hit = notes.filter((x) => x.off != null);
+    const onTime = hit.filter((x) => Math.abs(x.off) <= tol);
+    const missed = notes.filter((x) => x.off == null), extra = sc.extras.length;
+    const earlyAfterRest = hit.filter((x) => x.afterRest && x.off < -tol).length;
+    const judged = notes.filter((x) => x.hold), short = judged.filter((x) => x.hold === 'short'), long = judged.filter((x) => x.hold === 'long');
+    const lengthsOk = !this.cfg.holds || (!short.length && !long.length);
+    this.total++; if (onTime.length === notes.length && !extra && lengthsOk) this.right++;
     this.score();
-    const avg = hit.length ? Math.round(mean(hit)) : 0;
-    const tend = !hit.length ? '' : Math.abs(avg) < 15 ? ' · nicely centred' : ` · on average ${Math.abs(avg)} ms ${avg > 0 ? 'late' : 'early'}`;
-    this.ui.prompt(`${onTime} of ${offsets.length} on time${tend}${extra ? ` · ${extra} extra tap${extra > 1 ? 's' : ''}` : ''}.`);
-    this.ui.buttons([{ id: 'hear', label: '▶ Hear it' }, { id: 'go', label: 'Try again' }, { id: 'new', label: 'Next', primary: true }]);
+    const avg = hit.length ? Math.round(mean(hit.map((x) => x.off))) : 0;
+    const sd = hit.length > 1 ? Math.round(Math.sqrt(mean(hit.map((x) => (x.off - avg) ** 2)))) : 0;
+    const tend = !hit.length ? '' : Math.abs(avg) < 15 ? ' · nicely centred' : ` · on average ${Math.abs(avg)} ms ${avg > 0 ? 'late (dragging)' : 'early (rushing)'}`;
+    const where = (list) => list.slice(0, 2).map((x) => this.place(x.q)).join(', ') + (list.length > 2 ? '…' : '');
+    const more = [];
+    if (missed.length) more.push(`missed ${missed.length} (${where(missed)})`);
+    if (extra) more.push(`${extra} extra tap${extra > 1 ? 's' : ''} (${where(sc.extras)})`);
+    if (earlyAfterRest) more.push(`came in early after a rest ×${earlyAfterRest}`);
+    if (this.cfg.holds && judged.length) {
+      if (short.length) more.push(`${short.length} cut short (${where(short)})`);
+      if (long.length) more.push(`${long.length} held too long (${where(long)})`);
+      if (!short.length && !long.length) more.push(`note lengths ✓ (${judged.length} checked)`);
+    }
+    this.ui.prompt(`${onTime.length} of ${notes.length} on time${tend}.`
+      + (more.length ? `<br><span class="muted">${more.join(' · ')}</span>` : ''));
+    this.log({ kind: 'rhythm', notes: notes.length, onTime: onTime.length, offs: hit.map((x) => x.off), sd, missed: missed.length, extra,
+      earlyAfterRest, rests: notes.filter((x) => x.afterRest).length, judged: judged.length, short: short.length, long: long.length, tol });
+    this.readyButtons(true);
     this.show();
+  }
+  /** "bar 2, beat 3&" for a position in quarter notes from the start. */
+  place(q) {
+    const bq = barQ(this.r), bar = Math.floor(q / bq + 1e-6);
+    const syl = syllable(q - bar * bq, this.r, 'numbers');
+    return `bar ${bar + 1}${syl ? ` “${syl}”` : ''}`;
   }
   button(id) {
     if (id === 'hear') this.hear();
     if (id === 'go') this.go();
     if (id === 'new') { clearTimeout(this.timer); this.next(); }
+    if (id === 'holds') {
+      this.cfg.holds = !this.cfg.holds; this.env.save('tap', this.cfg);
+      if (this.state === 'done') this.readyButtons(true); else { this.readyPrompt(); this.readyButtons(); }
+    }
   }
-  stop() { super.stop(); clearTimeout(this.timer); this.env.pad(false); this.env.animate(false); }
+  stop() { super.stop(); clearTimeout(this.timer); for (const x of this.countTimers || []) clearTimeout(x); this.env.pad(false); this.env.animate(false); }
 }
 
 class HearRhythm extends Exercise {
@@ -303,8 +385,8 @@ class CountingLesson extends Exercise {
 
 export const RHYTHM = [
   { id: 'counting', title: 'Learn to count', blurb: 'Beats, time signatures, dots, rests, 6/8, triplets, swing, syncopation, consonants.', make: (e, o) => new CountingLesson(e, o) },
-  { id: 'tap', title: 'Tap the rhythm', blurb: 'Read a rhythm and tap it in time. See every note early or late.', levels: true,
-    why: 'Touch is the most reliable way to check timing (microphone clap detection adds delay). Easy: quarters, halves, eighths in 2/4, 3/4, 4/4. Medium: dotted notes, sixteenths, rests, syncopation, 6/8. Hard: triplets, ties, swing, 5/4 and 7/8. Counting syllables are shown under the notes (choose numbers or Takadimi in Settings).',
+  { id: 'tap', title: 'Tap the rhythm', blurb: 'Read a rhythm and tap it in time, holding each note for its length.', levels: true,
+    why: 'Press on each note and hold it for its full length, lifting when it ends: the app checks when you press (early or late, in ms), when you let go (notes cut short or held into a rest), and finds missed notes and extra taps. Start always counts you in with one full bar at the rhythm’s own tempo (shown, e.g. ♩ = 72). Easy: quarters, halves, eighths in 2/4, 3/4, 4/4 at ♩ = 80. Medium: dotted notes, sixteenths, rests, syncopation, 6/8, at ♩ = 72. Hard: triplets, ties, swing, 5/4 and 7/8, at ♩ = 66. “Lengths: off” goes back to tapping only. Counting syllables are shown under the notes (numbers or Takadimi in Settings).',
     make: (e, o) => new TapRhythm(e, o) },
   { id: 'hearrhythm', title: 'Hear the rhythm', blurb: 'Listen, then pick which of three rhythms you heard.', levels: true,
     why: 'Connects what you hear to what you read. Same levels as Tap the rhythm.', make: (e, o) => new HearRhythm(e, o) },

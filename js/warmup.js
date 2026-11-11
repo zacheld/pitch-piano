@@ -38,7 +38,7 @@ class WarmUp extends Exercise {
       t += 0.75;
       for (const n of this.p.notes) {
         this.env.noteAt(k + n, t, beat * 0.95, 0.8);
-        script.push({ midi: k + n, t0: this.env.vtOf(t), t1: this.env.vtOf(t + beat), state: 'pending', inT: 0, tot: 0 });
+        script.push({ midi: k + n, t0: this.env.vtOf(t), t1: this.env.vtOf(t + beat), state: 'pending', inT: 0, tot: 0, csum: 0, cn: 0 });
         t += beat;
       }
       t += beat * 1.5; // breathe
@@ -53,10 +53,19 @@ class WarmUp extends Exercise {
     if (!this.running) return;
     for (const s of this.script) {
       if (s.state === 'good' || s.state === 'off') continue;
-      if (t >= s.t1) { s.state = s.tot && s.inT / s.tot >= 0.4 ? 'good' : 'off'; continue; }
+      if (t >= s.t1) {
+        s.state = s.tot && s.inT / s.tot >= 0.4 ? 'good' : 'off';
+        // feedback: where each note sat, from its second half (the first half is still arriving from the last note)
+        if (s.cn >= 5) this.log({ kind: 'pitch', midi: s.midi, cents: Math.round(s.csum / s.cn), along: true, onPitch: +(s.inT / s.tot).toFixed(2) });
+        else if (s.tot > 0) this.log({ kind: 'unsung' });
+        continue;
+      }
       if (t < s.t0) break;
       s.state = 'current'; s.tot += dt;
-      if (centre != null && Math.abs(centre - s.midi) <= 0.6) s.inT += dt;
+      if (centre != null && Math.abs(centre - s.midi) <= 0.6) {
+        s.inT += dt;
+        if (t >= s.t0 + 0.45 * (s.t1 - s.t0)) { s.csum += (centre - s.midi) * 100; s.cn++; }
+      }
       break;
     }
   }

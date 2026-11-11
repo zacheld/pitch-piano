@@ -118,6 +118,12 @@ try {
     resolve(ev.defaultPrevented);
   }), { x: kb.x + kb.width / 2, y: kb.y + kb.height - 30 });
   ok(lp, 'touches on the keys are taken by the app (stops the iOS magnifier)');
+  // the rhythm tap pad is a button (which the page-wide rule leaves alone), and it's now held down for note lengths
+  await page.evaluate(() => { window.__pp.startPractice('tap'); document.querySelector('#exButtons button.primary').click(); });
+  await page.waitForTimeout(300);
+  const padHeld = await page.evaluate(() => { const ev = new Event('touchstart', { bubbles: true, cancelable: true }); document.getElementById('tapPad').dispatchEvent(ev); return ev.defaultPrevented; });
+  await page.evaluate(() => window.__pp.stopPractice());
+  ok(padHeld, 'holding the rhythm tap pad doesn’t bring up the iOS magnifier');
 
   // landscape
   await page.setViewportSize({ width: 852, height: 393 });

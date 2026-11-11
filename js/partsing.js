@@ -145,7 +145,7 @@ export class PartSinging extends Exercise {
       s.tot += dt;
       if (centre != null) {
         this.voiced += dt;
-        if (Math.abs(centre - s.midi) <= 0.5) { s.inT += dt; this.voicedIn += dt; }
+        if (Math.abs(centre - s.midi) <= 0.5) { s.inT += dt; this.voicedIn += dt; s.csum = (s.csum || 0) + (centre - s.midi) * 100; s.cn = (s.cn || 0) + 1; }
       }
       break;
     }
@@ -158,6 +158,7 @@ export class PartSinging extends Exercise {
     // judge the notes you reached; ones you never got to (stopped early) stay unmarked
     for (const s of this.script) if (s.state !== 'good' && ta >= s.a0 + 0.15) s.state = s.tot > 0 && s.inT / s.tot >= 0.5 ? 'good' : 'off';
     for (const s of this.script) if (s.state === 'current') s.state = 'pending';
+    for (const s of this.script) if (s.state !== 'pending' && s.cn >= 5) this.log({ kind: 'pitch', midi: s.midi, cents: Math.round(s.csum / s.cn), along: true, onPitch: +(s.inT / Math.max(s.tot, 1e-6)).toFixed(2) });
     const reached = this.script.filter((s) => s.state !== 'pending').length;
     const good = this.script.filter((s) => s.state === 'good').length;
     const pct = this.voiced > 0 ? Math.round((this.voicedIn / this.voiced) * 100) : 0;
