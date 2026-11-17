@@ -66,6 +66,8 @@ Karaoke blocks run from A up to G♯ (mid2 = A3–G♯4), matching the Japanese 
 2. Tap **Share** → **Add to Home Screen** → keep **Open as Web App** on → **Add**.
 3. Open it from the new icon. It runs full-screen, appears in the app switcher on its own, and works offline once it has loaded.
 
+**If the microphone stops working after an iPhone update:** the app tries three ways of using it, from the one with the most iPhone tweaks (standard: keeps the piano loud while listening) to the plainest (simple; then separate, with its own audio engine for listening). If iOS refuses the mic without asking, sends only silence even after a restart, or closes the app while the mic is starting, it moves to the next way by itself and keeps the one that works (Settings → iPhone audio → Microphone method; Settings → Listening → Microphone status shows what happened). A tap on the mic button asks for the microphone before doing anything else, since iOS only lets a page ask straight from a tap.
+
 iPhone asks for microphone permission each time the app is opened; Home Screen web apps can't keep that permission (a Safari limitation, not something the app can change). Updates install by themselves: open the app, and it switches to the new version within a few seconds unless you're listening.
 
 ## Files

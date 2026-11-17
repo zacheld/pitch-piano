@@ -20,7 +20,7 @@ import { Drone } from './drone.js';
 import { Recorder } from './recorder.js';
 import { describe, tipsFor, historyEntry, dailyTrend } from './feedback.js';
 
-const VERSION = '1.10.0';
+const VERSION = '1.10.1';
 const KEY_SIZES = { s: 34, m: 44, l: 56 };
 const VOICES = {
   bass: { label: 'Bass', full: [40, 64], comfy: [41, 57] },
@@ -35,7 +35,7 @@ const DEFAULTS = {
   a4: 440, sensitivity: 0.6, speed: 'normal',
   levelStyle: 'karaoke', flats: false, showCents: true, colorTrace: true, span: 18, window: 7,
   highlight: true, followKeys: true, showTargets: true, keyLabels: 'white', keySize: 'm', sustain: true, volume: 0.8,
-  echo: false, callAudio: true,
+  echo: false, callAudio: true, micMode: 'standard',
   view: 'graph', key: 'C', clef: 'tenor', staffLabels: 'names', staffLine: true,
   voice: 'tenor', rangeLow: null, rangeHigh: null, strict: 'normal', droneFifth: true, ex: {}, levels: {}, practiceKey: 'random', calib: 0,
   counting: 'numbers', tapOffset: 0, micLatency: null, hideLive: false, planLength: 20,
@@ -89,9 +89,13 @@ const drone = new Drone(ctx, piano.out);
 const recorder = new Recorder(ctx, piano.out);
 
 // iOS starts audio suspended until a tap; resume on any touch (also after phone calls or other interruptions)
-const wake = () => {
+// (A tap on the mic button is left alone here: there the microphone request has to be the first thing the
+// tap does, and startMic wakes the audio straight after it.)
+const wake = (e) => {
   if (synthOpen) return; // the chord synth has its own sound; this app's stays paused under it
+  if (e && e.target && e.target.closest && e.target.closest('#micBtn')) return;
   if (ctx.state !== 'running') ctx.resume().catch(() => {});
+  if (mic && mic.ctx !== ctx && mic.ctx.state !== 'running') mic.ctx.resume().catch(() => {});
   if (piano.route === 'stream' && piano.el && piano.el.paused) { const p = piano.el.play(); if (p && p.catch) p.catch(() => {}); }
 };
 for (const ev of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) window.addEventListener(ev, wake, { capture: true, passive: true });
@@ -176,28 +180,68 @@ $('viewGraph').addEventListener('click', () => { if (!practice) setStageView('gr
 $('viewStaff').addEventListener('click', () => { if (!practice) setStageView('staff'); });
 
 // ---------- microphone ----------
+// ---------- the microphone ----------
+// iOS keeps changing what a Home Screen web app may do with the microphone. There are three ways to start it,
+// from the one with the most iPhone-specific tweaks to the plainest:
+//   standard: switches iOS to its play-and-record audio mode and sends the piano along the call-audio path
+//             (so the piano stays loud while listening)
+//   simple:   none of that: the browser's own defaults (the piano is quieter while listening)
+//   separate: simple, plus a separate audio engine just for listening, at the microphone's own rate
+// If one fails (iOS refuses it without asking, it sends only silence even after a restart, or the app gets
+// restarted while it starts), the next way is used, and the one that works is kept (Settings → Listening).
+const MIC_MODES = ['standard', 'simple', 'separate'];
+const micMode = () => (MIC_MODES.includes(S.micMode) ? S.micMode : 'standard');
+function nextMicMode(from, why) {
+  const i = MIC_MODES.indexOf(from);
+  if (i < 0 || i >= MIC_MODES.length - 1) return false;
+  S.micMode = MIC_MODES[i + 1]; save();
+  noteProblem(`${why}. Switched to the ${S.micMode} microphone method.`);
+  return true;
+}
+// If the app is closed by the phone while the microphone is starting (a crash), say so next time, and try
+// the next method.
+{
+  const was = store.get('micStarting', null);
+  store.del('micStarting');
+  if (was && Date.now() - was.at < 3 * 60000) {
+    const moved = nextMicMode(was.mode, 'The app was restarted while the microphone was starting');
+    setTimeout(() => showMsg('Last time, the app closed while the microphone was starting. ' + (moved ? 'Tap the mic to try again: it will use a simpler way this time.' : 'Try opening Pitch Piano in Safari instead of from the Home Screen.')), 600);
+  }
+}
+
 async function startMic() {
   if (listening || starting) return;
-  wake();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     return showMsg('This browser can’t use the microphone. On iPhone, open the app from Safari or your Home Screen.');
   }
-  starting = true; render();
+  starting = true;
   const attempt = ++micAttempt;
-  piano.useCallAudio(S.callAudio); // must happen inside the tap, before any waiting
-  setSession('play-and-record');
+  const mode = micMode();
+  // The tap's permission goes to the microphone request first, before anything else uses the tap.
+  if (mode !== 'standard') setSession('auto');
+  const constraints = mode === 'separate' ? { audio: true } : { audio: { echoCancellation: S.echo, noiseSuppression: false, autoGainControl: false } };
+  const asked = performance.now();
+  let request;
+  try { request = navigator.mediaDevices.getUserMedia(constraints); } catch (e) { request = Promise.reject(e); }
+  store.set('micStarting', { at: Date.now(), mode });
+  let capCtx = ctx;
+  if (mode === 'separate') { try { capCtx = new AC({ latencyHint: 'interactive' }); capCtx.resume().catch(() => {}); } catch (e) { capCtx = ctx; } }
+  wake();
+  if (mode === 'standard') { piano.useCallAudio(S.callAudio); setSession('play-and-record'); } // inside the tap, before any waiting
+  else piano.useCallAudio(false);
+  render();
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: S.echo, noiseSuppression: false, autoGainControl: false },
-    });
-    if (attempt !== micAttempt) { for (const t of stream.getTracks()) t.stop(); return; } // cancelled meanwhile
+    const stream = await request;
+    store.del('micStarting');
+    if (attempt !== micAttempt) { for (const t of stream.getTracks()) t.stop(); if (capCtx !== ctx) capCtx.close().catch(() => {}); return; } // cancelled meanwhile
     if (ctx.state !== 'running') await ctx.resume().catch(() => {});
-    const src = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
+    if (capCtx.state !== 'running') await capCtx.resume().catch(() => {});
+    const src = capCtx.createMediaStreamSource(stream);
+    const analyser = capCtx.createAnalyser();
     analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0;
-    const sink = ctx.createGain(); sink.gain.value = 0; // keeps the analyser running; makes no sound
-    src.connect(analyser); analyser.connect(sink); sink.connect(ctx.destination);
-    mic = { stream, src, analyser, sink, buf: new Float32Array(analyser.fftSize), det: new PitchDetector({ sampleRate: ctx.sampleRate, size: analyser.fftSize }) };
+    const sink = capCtx.createGain(); sink.gain.value = 0; // keeps the analyser running; makes no sound
+    src.connect(analyser); analyser.connect(sink); sink.connect(capCtx.destination);
+    mic = { ctx: capCtx, mode, stream, src, analyser, sink, buf: new Float32Array(analyser.fftSize), det: new PitchDetector({ sampleRate: capCtx.sampleRate, size: analyser.fftSize }) };
     for (const t of stream.getAudioTracks()) {
       t.addEventListener('ended', () => { noteProblem('The microphone was ended by the phone'); stopMic(); });
       t.addEventListener('mute', () => noteProblem('The phone paused the microphone'));
@@ -207,14 +251,21 @@ async function startMic() {
     listening = true; paused = false;
     showMsg(null);
   } catch (err) {
+    store.del('micStarting');
+    if (capCtx !== ctx) capCtx.close().catch(() => {});
     if (attempt !== micAttempt) return;
     piano.useCallAudio(false);
     setSession('playback');
-    noteProblem('Microphone didn’t start: ' + (err && (err.name + ' ' + (err.message || '')) || 'error'));
-    const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
-    showMsg(denied
-      ? 'Microphone access is off. Tap the mic again and choose Allow. If it doesn’t ask, check Settings → Apps → Safari → Microphone.'
-      : 'Couldn’t start the microphone (' + (err && err.name || 'error') + ').');
+    const name = (err && err.name) || 'error';
+    const quick = performance.now() - asked < 400; // refused before any question could have been answered
+    noteProblem(`Microphone didn’t start (${mode} method, ${Math.round(performance.now() - asked)} ms): ${name} ${(err && err.message) || ''}`);
+    const denied = name === 'NotAllowedError' || name === 'SecurityError';
+    // a refusal without a question (or any other failure) may be iOS objecting to how it was asked: next time,
+    // ask the next way. A "Don't Allow" from you (which takes longer than a blink) changes nothing.
+    const moved = name !== 'NotFoundError' && (!denied || quick) && nextMicMode(mode, `iOS refused the microphone (${name})`);
+    showMsg(moved ? 'The microphone didn’t start. Tap the mic again: it will try a simpler way.'
+      : denied ? 'The phone didn’t allow the microphone. Tap the mic and choose Allow. If no question appears, check Settings → Apps → Safari → Microphone, or open Pitch Piano in Safari instead of from the Home Screen.'
+        : `Couldn’t start the microphone (${name}).`);
   } finally {
     if (attempt === micAttempt) { starting = false; render(); }
   }
@@ -222,6 +273,8 @@ async function startMic() {
 let micAttempt = 0;
 /** Tapping the mic while it's still starting (e.g. the permission question never came) gives up on it. */
 function cancelMicStart() {
+  noteProblem(`The microphone request got no answer (${micMode()} method); cancelled`);
+  store.del('micStarting');
   micAttempt++; starting = false;
   piano.useCallAudio(false); setSession('playback');
   render();
@@ -232,6 +285,7 @@ function stopMic() {
   if (mic) {
     for (const t of mic.stream.getTracks()) t.stop();
     try { mic.src.disconnect(); mic.analyser.disconnect(); mic.sink.disconnect(); } catch (e) { /* ok */ }
+    if (mic.ctx !== ctx) mic.ctx.close().catch(() => {});
     mic = null;
   }
   listening = false; paused = false; micLevel = 0;
@@ -403,14 +457,18 @@ function checkMic(ts, buf) {
   if (deadSince == null) { deadSince = ts; return; }
   if (ts - deadSince < 2500) return;
   deadSince = ts;
-  if (ctx.state !== 'running') {
-    ctx.resume().catch(() => {});
-    noteProblem(`Audio was ${ctx.state} while listening`);
+  if (mic.ctx.state !== 'running') {
+    mic.ctx.resume().catch(() => {});
+    noteProblem(`Audio was ${mic.ctx.state} while listening`);
     showMsg('Tap anywhere to turn the sound back on.');
   } else if (!micRestartAt) {
     micRestartAt = ts;
-    noteProblem(peak <= 1e-7 ? 'Mic sent only silence; restarted it' : 'Mic input froze; restarted it');
+    noteProblem((peak <= 1e-7 ? 'Mic sent only silence' : 'Mic input froze') + ` (${mic.mode} method); restarted it`);
     setTimeout(restartMic, 0); // not in the middle of this frame
+  } else if (nextMicMode(mic.mode, `Mic still silent after a restart (${mic.mode} method)`)) {
+    micRestartAt = ts;
+    showMsg('No sound from the microphone: trying a simpler way to use it…');
+    setTimeout(restartMic, 0);
   } else if (!micWarned) {
     micWarned = true;
     noteProblem('Mic still silent after a restart');
@@ -1167,6 +1225,8 @@ const SECTIONS = [
     { key: 'volume', type: 'slider', label: 'Piano volume', min: 0, max: 1, step: 0.01 },
   ] },
   { title: 'iPhone audio', items: [
+    { key: 'micMode', type: 'choice', label: 'Microphone method', options: [['standard', 'Standard (louder piano)'], ['simple', 'Simple'], ['separate', 'Separate (most compatible)']],
+      hint: 'If the microphone stops working after an iPhone update, the app switches to a simpler method by itself and keeps the one that works. Standard keeps the piano loud while listening; the others use the phone’s defaults, so the piano is quieter while the mic is on. Applies the next time you start listening.' },
     { key: 'callAudio', type: 'toggle', label: 'Louder piano while listening',
       hint: 'While the mic is on, plays the piano the way iPhone plays call audio, with an extra boost, so it isn’t turned down. If the piano sounds late or choppy while listening, turn this off.' },
     { key: 'echo', type: 'toggle', label: 'Echo cancellation',
@@ -1324,7 +1384,10 @@ function micStatus() {
     lines.push(`Hearing: <span class="lvl">${'▮'.repeat(bars)}<span>${'▮'.repeat(12 - bars)}</span></span> ${micDb > -119 ? Math.round(micDb) + ' dB' : 'nothing'}`);
     lines.push(deadSince != null ? 'Getting no sound from the mic.' : micDb < -75 ? 'Very quiet: is something covering the mic?' : shown != null && vt - lastVoiced < 0.5 ? `Hearing a note: ${spelledName(shown)}` : 'Hearing sound, but no clear note.');
   }
-  lines.push(`Audio: ${ctx.state} · ${ctx.sampleRate} Hz${st.sampleRate ? ` · mic ${st.sampleRate} Hz` : ''} · sensitivity ${Math.round(S.sensitivity * 100)}%${S.calib ? ` · correction ${S.calib}¢` : ''}`);
+  lines.push(`Audio: ${ctx.state} · ${ctx.sampleRate} Hz${mic && mic.ctx !== ctx ? ` · listening engine ${mic.ctx.state} ${mic.ctx.sampleRate} Hz` : ''}${st.sampleRate ? ` · mic ${st.sampleRate} Hz` : ''} · sensitivity ${Math.round(S.sensitivity * 100)}%${S.calib ? ` · correction ${S.calib}¢` : ''}`);
+  const ios = (navigator.userAgent.match(/OS (\d+)_(\d+)(?:_(\d+))? like Mac/) || []).slice(1).filter(Boolean).join('.');
+  const home = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone;
+  lines.push(`Microphone method: ${micMode()}${mic && mic.mode !== micMode() ? ` (this time: ${mic.mode})` : ''} · ${home ? 'Home Screen app' : 'browser tab'}${ios ? ` · iOS ${ios}` : ''}${navigator.audioSession ? ` · audio session ${navigator.audioSession.type}` : ''} · Pitch Piano ${VERSION}`);
   lines.push(problems.length ? 'Recent problems:<br>' + problems.slice().reverse().map((p) => `· ${p.t}: ${p.m.replace(/</g, '&lt;')}${p.n > 1 ? ` (×${p.n})` : ''}`).join('<br>') : 'No problems recorded.');
   return lines.join('<br>');
 }
@@ -1347,7 +1410,7 @@ function applySettings() {
   const w = KEY_SIZES[S.keySize] || 44;
   if (w !== keyboard.whiteW) keyboard.setKeyWidth(w);
   if (!S.highlight) keyboard.setSung(null, '');
-  if (listening) piano.useCallAudio(S.callAudio);
+  if (listening) piano.useCallAudio(S.callAudio && mic && mic.mode === 'standard');
   renderReadout(listening && vt - lastVoiced < 0.3);
   renderRange();
   render();

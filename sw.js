@@ -6,7 +6,7 @@
 //   from the stored copy, kept across releases in their own store. When they change, give SYNTH_CACHE a
 //   new name (tools/sync-synth.mjs prints the fingerprint to use).
 // Each release gets a new VERSION; the old stored copy is removed once the new one is in place.
-const VERSION = 'pitch-piano-1.10.0';
+const VERSION = 'pitch-piano-1.10.1';
 const SYNTH_CACHE = 'pitch-piano-synth-b090f0a11fd2';
 const CORE = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',

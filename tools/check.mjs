@@ -281,9 +281,15 @@ try {
   const take = await p3.evaluate(() => ({ s: window.__pp.take.seconds, frames: window.__pp.take.frames.length }));
   ok(take.s > 2.5 && take.s < 4.5 && take.frames > 120, `recorded ${take.s.toFixed(1)} s with ${take.frames} pitch frames`);
   await p3.evaluate(() => window.__pp.startReplay());
-  await p3.waitForTimeout(1500);
-  const rp = await p3.evaluate(() => ({ on: window.__pp.replaying, pts: window.__pp.graph.points.filter((x) => x.m !== null).length }));
-  ok(rp.on && rp.pts > 20, `replay redraws the pitch line in step (${rp.pts} points after 1.5 s)`);
+  // the replay should redraw exactly what was recorded up to where it has got to (how much of that is
+  // voiced depends on where the fake singer's loop happened to be, so compare with the take itself)
+  let rp = null;
+  for (const wait of [1500, 1000, 500]) {
+    await p3.waitForTimeout(wait);
+    rp = await p3.evaluate(() => { const pos = window.__pp.recorder.playPosition; return { on: window.__pp.replaying, pos, pts: window.__pp.graph.points.filter((x) => x.m !== null).length, want: window.__pp.take.frames.filter((f) => f.centre != null && f.t <= pos).length }; });
+    if (rp.want >= 20 || !rp.on) break;
+  }
+  ok(rp.on && rp.want >= 20 && Math.abs(rp.pts - rp.want) <= Math.max(4, rp.want * 0.1), `replay redraws the pitch line in step (${rp.pts} points drawn, ${rp.want} voiced frames recorded up to ${rp.pos.toFixed(1)} s)`);
   await p3.waitForFunction(() => !window.__pp.replaying, null, { timeout: 8000 }).catch(() => {});
   ok(!(await p3.evaluate(() => window.__pp.replaying)), 'replay finishes by itself');
   await p3.evaluate(() => window.__pp.setDrone(true));
